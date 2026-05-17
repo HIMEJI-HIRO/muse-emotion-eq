@@ -1,0 +1,23 @@
+# EEG Adaptive EQ — Python dependencies
+# Tested on Python 3.11 / Windows 11 / anaconda3
+
+# GUI
+PyQt5>=5.15
+pyqtgraph>=0.13
+
+# Numeric / signal processing
+numpy>=1.24
+scipy>=1.11
+
+# Audio I/O & DSP
+sounddevice>=0.4
+pedalboard>=0.9
+
+# OSC (Mind Monitor 受信)
+python-osc>=1.8
+
+# Video background (Emotional Seascape)
+opencv-python>=4.8
+
+# Optional: wavelet scalogram
+# pywavelets>=1.4

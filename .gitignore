@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Claude Code metadata
+.claude/
+
+# 個人の EEG / 録画データはコミットしない
+recordings/
+*.csv
+data/*.csv
+!data/sample_session.csv
+
+# 一時生成物
+*.log
+*.tmp
+
+# 大規模データセット (MUSIN-G 等) は repo に入れない
+archive/offline_ml/data/
+archive/offline_ml/*.csv
+archive/offline_ml/*.npy
+archive/offline_ml/*.pkl
