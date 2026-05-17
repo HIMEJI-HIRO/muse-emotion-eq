@@ -14,10 +14,16 @@ cv2.VideoCapture でフレームを読み、QImage に変換して QPainter で�
         1. 現シーン / 遷移中は両シーンを alpha blend
         2. オーバーレイ: カラーティント, 霧, HR リング, グリッター, 泡, ビネット
 """
+import contextlib
 import math
 import os
 import random
+import sys
 import time
+
+# cv2/ffmpeg の冗長な警告 (h264 mmco unref 等) を抑制
+os.environ.setdefault("OPENCV_FFMPEG_LOGLEVEL", "-8")
+os.environ.setdefault("OPENCV_LOG_LEVEL", "OFF")
 
 from PyQt5.QtCore import QPointF, QRectF, Qt, QTimer
 from PyQt5.QtGui import (QColor, QImage, QPainter, QPen, QPixmap,
@@ -27,8 +33,30 @@ from PyQt5.QtWidgets import QWidget
 try:
     import cv2
     HAS_CV2 = True
+    try:
+        cv2.setLogLevel(0)   # SILENT
+    except Exception:
+        pass
 except ImportError:
     HAS_CV2 = False
+
+
+# --- stderr 抑制 (FFmpeg の native ログを潰す) ---
+@contextlib.contextmanager
+def _suppress_stderr():
+    """ファイルディスクリプタレベルで stderr を /dev/null へ."""
+    try:
+        old_fd = os.dup(2)
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        try:
+            os.dup2(devnull, 2)
+            yield
+        finally:
+            os.dup2(old_fd, 2)
+            os.close(devnull)
+            os.close(old_fd)
+    except Exception:
+        yield  # 失敗しても処理は続ける
 
 
 # ---- アセット ------------------------------------------------------------
@@ -37,6 +65,18 @@ ASSETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
 VIDEO_CALM = os.path.join(ASSETS_DIR, "sea_calm.mp4")
 VIDEO_GOLDEN = os.path.join(ASSETS_DIR, "sea_golden.mp4")
 VIDEO_STORM = os.path.join(ASSETS_DIR, "sea_storm.mp4")
+# 海面 morph 動画 (8秒で 0→calm, 3→golden, 6→stormy へ連続変化)
+VIDEO_SURFACE_MORPH = os.path.join(ASSETS_DIR, "sea_surface_morph.mp4")
+
+# morph 動画内のシーン代表時刻 (秒)
+MORPH_TIME_CALM = 1.5
+MORPH_TIME_GOLDEN = 4.0
+MORPH_TIME_STORM = 6.5
+
+# scrub の追従速度 (位置を目標へ寄せる強さ, 1/秒)
+SCRUB_PULL = 0.6
+# 通常の前進速度倍率 (Arousal で 0.5〜1.4)
+SCRUB_BASE_RATE = 1.0
 
 
 # ---- EMA (33ms/frame) ----------------------------------------------------
@@ -62,7 +102,11 @@ def _lerp_color(c1, c2, t):
 
 # ==========================================================================
 class _VideoSource:
-    """cv2.VideoCapture を抱え、次フレームの QImage を供給するだけのクラス."""
+    """cv2.VideoCapture を抱え、次フレームの QImage を供給するクラス.
+
+    通常: update(now) で時間経過に応じて自動前進.
+    Morph mode: seek(t_sec) で任意の時刻にジャンプして 1 フレーム取得.
+    """
 
     def __init__(self, path):
         self.path = path
@@ -70,8 +114,9 @@ class _VideoSource:
         self._cap = None
         self._fps = 30.0
         self._frame_interval = 1.0 / 30.0
+        self._duration = 0.0
         self._last_grab = 0.0
-        self._cur_image = None    # QImage (最後に読んだフレーム)
+        self._cur_image = None
         self._rate = 1.0
         if self.available:
             self._open()
@@ -82,32 +127,107 @@ class _VideoSource:
         if fps and fps > 1.0:
             self._fps = float(fps)
         self._frame_interval = 1.0 / self._fps
+        n_frames = int(self._cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        self._duration = n_frames / self._fps if self._fps > 0 else 0.0
+        self._cur_video_time = 0.0   # 直近に読んだフレームの動画内時刻
+
+    @property
+    def duration(self):
+        return self._duration
 
     def set_rate(self, rate):
         self._rate = max(0.1, min(3.0, float(rate)))
 
     def update(self, now):
-        """時刻 now に応じて次フレームを読み込む (必要なら). cur_image を更新."""
+        """通常再生モード: 経過時間で次フレーム読み込み."""
         if not self.available or self._cap is None:
             return
-        # 速度倍率込みのフレーム間隔
         interval = self._frame_interval / self._rate
         if (now - self._last_grab) < interval:
             return
-        ok, frame = self._cap.read()
+        try:
+            with _suppress_stderr():
+                ok, frame = self._cap.read()
+                if not ok:
+                    self._cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    ok, frame = self._cap.read()
+        except Exception:
+            ok, frame = False, None
         if not ok:
-            # ループ
-            self._cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-            ok, frame = self._cap.read()
+            return
+        self._set_image(frame)
+        self._cur_video_time += self._frame_interval
+        if self._duration > 0 and self._cur_video_time >= self._duration:
+            self._cur_video_time = 0.0
+        self._last_grab = now
+
+    # スクラブ用 — seek はキーフレーム境界 (1秒単位) に丸めて頻度を激減
+    SEEK_QUANTIZE_SEC = 1.0    # この秒数の倍数にしか seek しない
+    SEEK_THRESHOLD = 0.6       # ここを超えてズレた時だけ seek 検討
+    def scrub_read(self, t_sec, now):
+        """目標時刻 t_sec に近づくよう次フレームを読む.
+        通常は前進 cap.read(). ズレ大なら GOP 境界に seek."""
+        if not self.available or self._cap is None:
+            return
+        interval = self._frame_interval / max(0.5, self._rate)
+        if (now - self._last_grab) < interval:
+            return
+
+        if self._duration > 0:
+            t_sec = t_sec % self._duration
+
+        delta = t_sec - self._cur_video_time
+        if self._duration > 0:
+            if delta > self._duration / 2:
+                delta -= self._duration
+            elif delta < -self._duration / 2:
+                delta += self._duration
+
+        need_seek = abs(delta) > self.SEEK_THRESHOLD or delta < -0.1
+
+        if need_seek:
+            # 1 秒境界に丸めて GOP のキーフレームに乗せる
+            seek_t = round(t_sec / self.SEEK_QUANTIZE_SEC) * self.SEEK_QUANTIZE_SEC
+            if self._duration > 0:
+                seek_t = seek_t % self._duration
+            target_frame = int(seek_t * self._fps)
+            try:
+                with _suppress_stderr():
+                    self._cap.set(cv2.CAP_PROP_POS_FRAMES, target_frame)
+            except Exception:
+                pass
+            self._cur_video_time = seek_t
+
+        try:
+            with _suppress_stderr():
+                ok, frame = self._cap.read()
+        except Exception:
+            ok, frame = False, None
+        if not ok:
+            try:
+                with _suppress_stderr():
+                    self._cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    ok, frame = self._cap.read()
+            except Exception:
+                ok, frame = False, None
             if not ok:
                 return
-        # BGR → RGB、連続 numpy → QImage
+            self._cur_video_time = 0.0
+        self._set_image(frame)
+        if not need_seek:
+            self._cur_video_time += self._frame_interval
+            if self._duration > 0 and self._cur_video_time >= self._duration:
+                self._cur_video_time = 0.0
+        self._last_grab = now
+
+    def seek_read(self, t_sec):
+        self.scrub_read(t_sec, time.monotonic())
+
+    def _set_image(self, frame):
         h, w, _ = frame.shape
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        # QImage は bytes データの生存期間が必要 → copy()
         self._cur_image = QImage(rgb.data, w, h, 3 * w,
                                  QImage.Format_RGB888).copy()
-        self._last_grab = now
 
     def image(self):
         return self._cur_image
@@ -142,6 +262,29 @@ STORM_ENTER_V = 0.40
 STORM_ENTER_A = 0.60
 STORM_EXIT_V = 0.46
 STORM_EXIT_A = 0.45
+
+
+def _scene_to_morph_time(arousal, valence, duration):
+    """感情 (slow EMA 後) → morph 動画の目標タイムスタンプ (秒).
+    Calm (低A中V) → MORPH_TIME_CALM
+    Golden (高V)   → MORPH_TIME_GOLDEN
+    Storm (高A低V) → MORPH_TIME_STORM
+    その間は重み付き平均.
+    """
+    # 各シーンへの "近さ" を 0-1 で評価
+    # calm: 低 arousal & 中庸 valence
+    w_calm = max(0.0, 1.0 - 2.0 * arousal) * (1.0 - abs(valence - 0.5))
+    # golden: 高 valence
+    w_golden = max(0.0, (valence - 0.4) / 0.6)
+    # storm: 高 arousal & 低 valence
+    w_storm = max(0.0, (arousal - 0.4) / 0.6) * max(0.0, (0.5 - valence) / 0.5)
+    # ベースに少しの calm を底上げ (全部 0 にならないように)
+    w_calm += 0.1
+    total = w_calm + w_golden + w_storm
+    t = (w_calm * MORPH_TIME_CALM
+         + w_golden * MORPH_TIME_GOLDEN
+         + w_storm * MORPH_TIME_STORM) / total
+    return max(0.0, min(duration - 0.1, t))
 
 
 def _pick_scene_hysteresis(current, arousal, valence):
@@ -184,15 +327,32 @@ class SeaWidget(QWidget):
         self.setAutoFillBackground(False)
         self.setAttribute(Qt.WA_OpaquePaintEvent, True)
 
-        # 動画ソース
-        self._sources = {n: _VideoSource(SCENE_PATHS[n]) for n in SCENES}
-        self._available = [n for n, s in self._sources.items() if s.available]
-        if not self._available:
-            print("[SeaWidget] 動画なし or cv2 未インストール")
-            self._available = ["calm"]
+        # --- Morph モード判定 ---
+        # sea_surface_morph.mp4 があれば 1 本動画スクラブ方式.
+        # 無ければ従来 3 シーンクロスフェード方式.
+        self._morph_source = None
+        self._use_morph = False
+        if HAS_CV2 and os.path.exists(VIDEO_SURFACE_MORPH):
+            ms = _VideoSource(VIDEO_SURFACE_MORPH)
+            if ms.available and ms.duration > 0.5:
+                self._morph_source = ms
+                self._use_morph = True
 
-        # シーン遷移
-        self._current = self._available[0]
+        if self._use_morph:
+            self._sources = {}
+            self._available = []
+            # scrub state (秒)
+            self._scrub_pos = MORPH_TIME_CALM
+            self._scrub_target = MORPH_TIME_CALM
+        else:
+            self._sources = {n: _VideoSource(SCENE_PATHS[n]) for n in SCENES}
+            self._available = [n for n, s in self._sources.items() if s.available]
+            if not self._available:
+                print("[SeaWidget] 動画なし or cv2 未インストール")
+                self._available = ["calm"]
+
+        # シーン遷移 (3 シーンモード用)
+        self._current = self._available[0] if self._available else "calm"
         self._target = self._current
         self._fade_start = 0.0
         self._fading = False
@@ -235,18 +395,23 @@ class SeaWidget(QWidget):
             self._t["hsi"] = max(0.0, min(1.0, float(hsi)))
         if signal_fresh is not None:
             self._t["fresh"] = max(0.0, min(1.0, float(signal_fresh)))
-        # シーン選択: slow EMA + ヒステリシス + 最小滞留時間
+        # シーン選択 / scrub 目標更新
         if arousal is not None and valence is not None:
             self._scene_a += SCENE_EMA_ALPHA * (float(arousal) - self._scene_a)
             self._scene_v += SCENE_EMA_ALPHA * (float(valence) - self._scene_v)
-            now = time.monotonic()
-            # 最後の切替から SCENE_MIN_DWELL_SEC 未満は判定しない
-            if (now - self._last_switch_time) >= SCENE_MIN_DWELL_SEC:
-                want = _pick_scene_hysteresis(
-                    self._target, self._scene_a, self._scene_v)
-                if want in self._available and want != self._target:
-                    self._request_scene(want)
-                    self._last_switch_time = now
+            if self._use_morph:
+                # 感情 → morph 動画内の目標タイムスタンプを補間
+                self._scrub_target = _scene_to_morph_time(
+                    self._scene_a, self._scene_v,
+                    self._morph_source.duration if self._morph_source else 8.0)
+            else:
+                now = time.monotonic()
+                if (now - self._last_switch_time) >= SCENE_MIN_DWELL_SEC:
+                    want = _pick_scene_hysteresis(
+                        self._target, self._scene_a, self._scene_v)
+                    if want in self._available and want != self._target:
+                        self._request_scene(want)
+                        self._last_switch_time = now
 
     def trigger_pulse(self, strength=1.0):
         self._rings.append((time.monotonic(), float(strength)))
@@ -271,8 +436,10 @@ class SeaWidget(QWidget):
 
     # --- メイン tick -----------------------------------------------------
     def _tick(self):
-        if not self.isVisible():
-            return
+        # isVisible() チェックを外す: reparent 直後に False を返す Qt の挙動で
+        # 動画が黒のままになる事象があったため. 描画は paintEvent に任せ、
+        # 隠れているときは Qt 側がそもそも paintEvent を呼ばないので
+        # 余分な負荷は小さい.
         now = time.monotonic()
         dt = max(0.001, now - self._last_tick)
         self._last_tick = now
@@ -316,14 +483,21 @@ class SeaWidget(QWidget):
                 alive.append(b)
         self._bubbles = alive[:180]
 
-        # 動画フレーム更新 (再生速度は Arousal 連動)
-        rate = 0.7 + self._c["arousal"] * 0.7
-        for src in self._sources.values():
-            src.set_rate(rate)
-        # アクティブな (current, target) だけ進めれば十分だが全部回しても軽い
-        active_scenes = {self._current, self._target}
-        for name in active_scenes:
-            self._sources[name].update(now)
+        # 動画フレーム更新
+        if self._use_morph and self._morph_source is not None:
+            # シンプル前進ループ. Arousal で再生速度のみ変える.
+            # 動画自体に morph が入っているので emotion 連動を捨てても見栄え◯
+            rate = 0.5 + self._c["arousal"] * 0.9
+            self._morph_source.set_rate(rate)
+            self._morph_source.update(now)
+        else:
+            rate = 0.7 + self._c["arousal"] * 0.7
+            for src in self._sources.values():
+                src.set_rate(rate)
+            active_scenes = {self._current, self._target}
+            for name in active_scenes:
+                if name in self._sources:
+                    self._sources[name].update(now)
 
         self.update()
 
@@ -369,12 +543,15 @@ class SeaWidget(QWidget):
                 y = (h - draw_h) // 2
             qp.drawImage(QRectF(x, y, draw_w, draw_h), img)
 
-        if self._fading and self._target != self._current:
+        if self._use_morph:
+            self._draw_morph_frame(qp, w, h)
+        elif self._fading and self._target != self._current:
             draw_frame(self._current, 1.0 - progress)
             draw_frame(self._target, progress)
         else:
             scene = self._target if self._fading else self._current
-            draw_frame(scene, 1.0)
+            if scene in self._sources:
+                draw_frame(scene, 1.0)
 
         qp.setOpacity(1.0)
 
@@ -420,6 +597,27 @@ class SeaWidget(QWidget):
         qp.fillRect(QRectF(0, 0, w, h), vg)
 
         qp.end()
+
+    def _draw_morph_frame(self, qp, w, h):
+        """morph モード: 1 本の動画から現在フレームを描画."""
+        if self._morph_source is None:
+            return
+        img = self._morph_source.image()
+        if img is None:
+            return
+        src_ratio = img.width() / max(1, img.height())
+        dst_ratio = w / max(1, h)
+        if src_ratio > dst_ratio:
+            draw_h = h
+            draw_w = int(draw_h * src_ratio)
+            x = (w - draw_w) // 2
+            y = 0
+        else:
+            draw_w = w
+            draw_h = int(draw_w / src_ratio)
+            x = 0
+            y = (h - draw_h) // 2
+        qp.drawImage(QRectF(x, y, draw_w, draw_h), img)
 
     def _paint_rings(self, qp, w, h, now):
         if not self._rings:
@@ -487,6 +685,8 @@ class SeaWidget(QWidget):
 
     # --- lifecycle -------------------------------------------------------
     def stop(self):
+        if self._morph_source is not None:
+            self._morph_source.release()
         for src in self._sources.values():
             src.release()
 

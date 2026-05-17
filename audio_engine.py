@@ -101,6 +101,32 @@ def pick_input_device():
     return None, None
 
 
+def find_input_on_hostapi(name_part, host_api_idx):
+    """指定 host API 上で name_part を含む入力デバイスを探す."""
+    name_part = name_part.lower()
+    for i, d in enumerate(sd.query_devices()):
+        if (d.get("hostapi") == host_api_idx
+                and d["max_input_channels"] > 0
+                and name_part in d["name"].lower()):
+            return i, d
+    return None, None
+
+
+def pick_input_for_output(output_index):
+    """出力デバイスと同じ host API 上の CABLE Output を返す.
+    duplex stream の Illegal combination 回避用."""
+    try:
+        out_dev = sd.query_devices(output_index)
+        host_api = out_dev.get("hostapi")
+        for kw in INPUT_KEYWORDS:
+            idx, dev = find_input_on_hostapi(kw, host_api)
+            if idx is not None:
+                return idx, dev
+    except Exception:
+        pass
+    return None, None
+
+
 def pick_output_device():
     """CABLE 系を除外して出力を探す.
 
@@ -256,13 +282,7 @@ class AudioEngine:
         if self.running:
             return True
 
-        in_idx, in_dev = pick_input_device()
-        if in_idx is None:
-            self.last_error = (
-                "'CABLE Output' が見つかりません。"
-                "VB-CABLE と Spotify の出力設定を確認してください。")
-            return False
-
+        # 出力を先に決める (host API を揃えるため)
         if output_index is not None:
             try:
                 out_dev = sd.query_devices(output_index)
@@ -286,27 +306,68 @@ class AudioEngine:
                     "WF-1000XM5 を接続するかヘッダの Output ▾ から選択してください。")
                 return False
 
+        # 出力と同じ host API 上の CABLE Output を優先で選ぶ
+        in_idx, in_dev = pick_input_for_output(out_idx)
+        if in_idx is None:
+            in_idx, in_dev = pick_input_device()
+        if in_idx is None:
+            self.last_error = (
+                "'CABLE Output' が見つかりません。"
+                "VB-CABLE と Spotify の出力設定を確認してください。")
+            return False
+
         self.input_name = in_dev["name"]
         self.output_name = out_dev["name"]
 
-        try:
-            self._stream = sd.Stream(
+        # duplex stream を試み、Illegal combination なら別 host API の入力で再試行
+        def _try_open(i_idx, o_idx):
+            return sd.Stream(
                 samplerate=self.sample_rate,
                 blocksize=self.block_size,
                 channels=self.channels,
                 dtype="float32",
-                device=(in_idx, out_idx),
+                device=(i_idx, o_idx),
                 callback=self._callback,
                 latency=LATENCY_HINT,
             )
+
+        try:
+            self._stream = _try_open(in_idx, out_idx)
             self._stream.start()
             self.running = True
             self.last_error = None
             return True
         except Exception as e:
+            err_msg = str(e)
+            # Illegal combination の場合、全 host API の CABLE Output を総当たり
+            if "Illegal combination" in err_msg or "PaErrorCode -9993" in err_msg:
+                for cand_idx, cand_dev in self._enumerate_cable_outputs():
+                    if cand_idx == in_idx:
+                        continue
+                    try:
+                        self._stream = _try_open(cand_idx, out_idx)
+                        self._stream.start()
+                        self.running = True
+                        self.input_name = cand_dev["name"]
+                        self.last_error = None
+                        return True
+                    except Exception:
+                        continue
             self.last_error = f"stream start: {e}"
             self._stream = None
             return False
+
+    @staticmethod
+    def _enumerate_cable_outputs():
+        """全 host API の CABLE Output エントリを返す."""
+        if not HAS_AUDIO:
+            return
+        for i, d in enumerate(sd.query_devices()):
+            if d["max_input_channels"] > 0:
+                for kw in INPUT_KEYWORDS:
+                    if kw.lower() in d["name"].lower():
+                        yield i, d
+                        break
 
     def stop(self):
         if self._stream is not None:

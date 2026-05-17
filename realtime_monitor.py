@@ -360,6 +360,74 @@ class Card(QtWidgets.QFrame):
         self.is_expanded = expanded
 
 
+class _HudBar(QtWidgets.QWidget):
+    """HUD 用グラデーション付きバー. set_value(0..1)."""
+
+    def __init__(self, gradient_stops, parent=None):
+        super().__init__(parent)
+        self.setMinimumHeight(8)
+        self.setMaximumHeight(10)
+        self.setMinimumWidth(80)
+        self._stops = gradient_stops  # [(pos0..1, QColor), ...]
+        self._value = 0.5
+
+    def set_value(self, v):
+        v = max(0.0, min(1.0, float(v)))
+        if abs(v - self._value) < 0.001:
+            return
+        self._value = v
+        self.update()
+
+    def paintEvent(self, event):
+        qp = QtGui.QPainter(self)
+        qp.setRenderHint(QtGui.QPainter.Antialiasing, True)
+        r = self.rect().adjusted(0, 0, -1, -1)
+        # 背景 (track)
+        qp.setPen(QtCore.Qt.NoPen)
+        qp.setBrush(QtGui.QColor(255, 255, 255, 22))
+        qp.drawRoundedRect(r, 3, 3)
+        # 塗り
+        if self._value > 0.001:
+            fill_w = int(r.width() * self._value)
+            fill_rect = QtCore.QRect(r.left(), r.top(), fill_w, r.height())
+            grad = QtGui.QLinearGradient(0, 0, r.width(), 0)
+            for pos, col in self._stops:
+                grad.setColorAt(pos, col)
+            qp.setBrush(grad)
+            qp.drawRoundedRect(fill_rect, 3, 3)
+        qp.end()
+
+
+class _ScanlineOverlay(QtWidgets.QWidget):
+    """画面全体を覆う薄い走査線オーバーレイ (CRT 風)."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents, True)
+        self.setAttribute(QtCore.Qt.WA_NoSystemBackground, True)
+        self.setAttribute(QtCore.Qt.WA_TranslucentBackground, True)
+        self._phase = 0
+
+    def paintEvent(self, event):
+        qp = QtGui.QPainter(self)
+        qp.setPen(QtCore.Qt.NoPen)
+        line_color = QtGui.QColor(255, 255, 255, 8)
+        qp.setBrush(line_color)
+        h = self.height()
+        for y in range(0, h, 3):
+            qp.drawRect(0, y, self.width(), 1)
+        # 1本のブライト走査線が下に流れる
+        bright_y = (self._phase % max(1, h))
+        bright = QtGui.QColor(255, 255, 255, 25)
+        qp.setBrush(bright)
+        qp.drawRect(0, bright_y, self.width(), 2)
+        qp.end()
+
+    def advance(self):
+        self._phase = (self._phase + 4) % max(1, self.height())
+        self.update()
+
+
 def progress_style(color, height=18):
     return f"""
         QProgressBar {{
@@ -479,6 +547,32 @@ class MainWindow(QtWidgets.QMainWindow):
         self.focused_card = None
         self.stack.setCurrentIndex(0)
 
+        # --- Watch page: Sea を通常レイアウトで全画面、HUD は子で手動配置 ---
+        self.watch_page = QtWidgets.QWidget()
+        wp_lay = QtWidgets.QVBoxLayout(self.watch_page)
+        wp_lay.setContentsMargins(0, 0, 0, 0)
+        wp_lay.setSpacing(0)
+        self._watch_sea_holder = QtWidgets.QWidget()
+        sh_lay = QtWidgets.QVBoxLayout(self._watch_sea_holder)
+        sh_lay.setContentsMargins(0, 0, 0, 0)
+        wp_lay.addWidget(self._watch_sea_holder)
+        # HUD は watch_page の子として overlay (resizeEvent で全画面追従)
+        self._watch_hud = self._build_watch_hud()
+        self._watch_hud.setParent(self.watch_page)
+        self._watch_hud.setGeometry(self.watch_page.rect())
+        self._watch_hud.raise_()
+        self.watch_page.installEventFilter(self)
+        self.stack.addWidget(self.watch_page)
+
+        # 走査線オーバーレイは廃止 (chk 削除済). resize 連携だけ残しても無害だが
+        # 念のためダミー Widget を作って既存参照を維持.
+        self._scanline = QtWidgets.QWidget(central)
+        self._scanline.setVisible(False)
+        central.installEventFilter(self)
+
+        self._mode = "studio"
+        self._update_mode_btn_style()
+
         # 履歴
         self.emo_hist_v = deque([0.5] * EMO_HIST_LEN, maxlen=EMO_HIST_LEN)
         self.emo_hist_a = deque([0.5] * EMO_HIST_LEN, maxlen=EMO_HIST_LEN)
@@ -579,6 +673,22 @@ class MainWindow(QtWidgets.QMainWindow):
         title_box.addWidget(main_title)
         title_box.addWidget(sub)
         h.addLayout(title_box)
+
+        # --- モードタブ (Studio / Listen / Watch) ---
+        h.addSpacing(20)
+        self.mode_btns = {}
+        for key, label in [("studio", "🧠 STUDIO"),
+                           ("listen", "🎚 LISTEN"),
+                           ("watch", "🌊 WATCH")]:
+            btn = QtWidgets.QPushButton(label)
+            btn.setCheckable(True)
+            btn.setCursor(QtCore.Qt.PointingHandCursor)
+            btn.setFixedHeight(30)
+            btn.clicked.connect(lambda _, k=key: self._set_mode(k))
+            h.addWidget(btn)
+            self.mode_btns[key] = btn
+        self.mode_btns["studio"].setChecked(True)
+
         h.addStretch()
 
         hint = QtWidgets.QLabel("⛶  拡大  /  ESC  戻る")
@@ -1630,9 +1740,238 @@ class MainWindow(QtWidgets.QMainWindow):
         self._update_eq_mode_btn_style()
         if hasattr(self, "_update_eq_view_btn_style"):
             self._update_eq_view_btn_style()
+        if hasattr(self, "mode_btns"):
+            self._update_mode_btn_style()
+        if hasattr(self, "_watch_hud"):
+            self._restyle_watch_hud(self._watch_hud)
         if hasattr(self, "eq_bank"):
             for f in self.eq_bank.faders.values():
                 f.update()
+
+    # ---- Mode 切替 (Studio / Listen / Watch) ----
+    def _update_mode_btn_style(self):
+        t = self.theme
+        for key, btn in self.mode_btns.items():
+            active = btn.isChecked()
+            if active:
+                btn.setStyleSheet(
+                    f"QPushButton {{ background-color: {t.accent}; "
+                    f"color: {t.bg_deep}; border: 1px solid {t.accent}; "
+                    f"border-radius: 14px; padding: 4px 14px; "
+                    f"font-size: 11px; font-weight: bold; "
+                    f"letter-spacing: 1.2px; }}"
+                )
+            else:
+                btn.setStyleSheet(
+                    "QPushButton { background-color: transparent; "
+                    f"color: {t.text_dim}; border: 1px solid {t.border}; "
+                    f"border-radius: 14px; padding: 4px 14px; "
+                    f"font-size: 11px; letter-spacing: 1.2px; }}"
+                    f"QPushButton:hover {{ border-color: {t.accent}; "
+                    f"color: {t.text_main}; }}"
+                )
+
+    LISTEN_VISIBLE = {"eq", "emotion", "band"}
+
+    def _set_mode(self, mode):
+        if mode not in ("studio", "listen", "watch"):
+            return
+        for k, btn in self.mode_btns.items():
+            btn.setChecked(k == mode)
+        self._mode = mode
+        self._update_mode_btn_style()
+
+        # Watch → Sea ウィジェットを watch_page に reparent
+        sea_widget = getattr(self, "sea_widget", None)
+
+        if mode == "watch":
+            if sea_widget is not None:
+                if hasattr(self, "eq_stack"):
+                    idx = self.eq_stack.indexOf(sea_widget)
+                    if idx >= 0:
+                        self.eq_stack.removeWidget(sea_widget)
+                self._watch_sea_holder.layout().addWidget(sea_widget)
+                sea_widget.show()
+            self.stack.setCurrentWidget(self.watch_page)
+            self._watch_hud.raise_()
+        else:
+            if sea_widget is not None and hasattr(self, "eq_stack"):
+                if self.eq_stack.indexOf(sea_widget) < 0:
+                    self.eq_stack.insertWidget(1, sea_widget)
+                    sea_widget.show()
+            self.stack.setCurrentWidget(self.grid_page)
+            self._apply_card_visibility(mode)
+
+    def _apply_card_visibility(self, mode):
+        if mode == "studio":
+            for c in self.cards.values():
+                c.setVisible(True)
+        elif mode == "listen":
+            for cid, c in self.cards.items():
+                c.setVisible(cid in self.LISTEN_VISIBLE)
+
+    # ---- 走査線 ----
+    def _on_scanline_toggled(self, checked):
+        self._scanline.setVisible(checked)
+        if checked:
+            if not hasattr(self, "_scanline_timer"):
+                self._scanline_timer = QtCore.QTimer(self)
+                self._scanline_timer.timeout.connect(self._scanline.advance)
+            self._scanline_timer.start(33)
+            self._scanline.raise_()
+        else:
+            if hasattr(self, "_scanline_timer"):
+                self._scanline_timer.stop()
+
+    # ---- central サイズ追従 ----
+    def eventFilter(self, obj, event):
+        if event.type() == QtCore.QEvent.Resize:
+            if obj is self.centralWidget():
+                self._scanline.setGeometry(obj.rect())
+            if hasattr(self, "watch_page") and obj is self.watch_page:
+                self._watch_hud.setGeometry(self.watch_page.rect())
+                self._watch_hud.raise_()
+        return super().eventFilter(obj, event)
+
+    # ---- Watch mode の HUD ----
+    def _build_watch_hud(self):
+        w = QtWidgets.QWidget()
+        w.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents, True)
+        # ★ 重要: 背景を透明にしないと Sea が隠れる
+        w.setAttribute(QtCore.Qt.WA_TranslucentBackground, True)
+        w.setAttribute(QtCore.Qt.WA_NoSystemBackground, True)
+        w.setStyleSheet("QWidget { background: transparent; }")
+        lay = QtWidgets.QGridLayout(w)
+        lay.setContentsMargins(20, 20, 20, 20)
+
+        # 左下: NEURAL STATE
+        nstate = QtWidgets.QFrame()
+        nstate.setObjectName("hud")
+        nlay = QtWidgets.QVBoxLayout(nstate)
+        nlay.setContentsMargins(16, 12, 16, 12)
+        nlay.setSpacing(8)
+        nstate_title = QtWidgets.QLabel("〔 NEURAL STATE 〕")
+        nstate_title.setObjectName("hud_title")
+        nlay.addWidget(nstate_title)
+
+        # ARO: 青(低覚醒) → 赤(高覚醒)
+        aro_stops = [(0.0, QtGui.QColor(80, 140, 220)),
+                     (0.5, QtGui.QColor(255, 180, 80)),
+                     (1.0, QtGui.QColor(255, 80, 80))]
+        # VAL: 暗紫(不快) → 薄水色(快)
+        val_stops = [(0.0, QtGui.QColor(120, 60, 160)),
+                     (0.5, QtGui.QColor(80, 150, 230)),
+                     (1.0, QtGui.QColor(120, 230, 255))]
+        # ENG: 灰(散漫) → 緑(集中) → 黄(過集中)
+        eng_stops = [(0.0, QtGui.QColor(120, 120, 130)),
+                     (0.5, QtGui.QColor(80, 220, 130)),
+                     (1.0, QtGui.QColor(255, 220, 90))]
+
+        self._hud_aro_bar = _HudBar(aro_stops)
+        self._hud_val_bar = _HudBar(val_stops)
+        self._hud_eng_bar = _HudBar(eng_stops)
+        self._hud_aro_val = QtWidgets.QLabel("0.50")
+        self._hud_val_val = QtWidgets.QLabel("0.50")
+        self._hud_eng_val = QtWidgets.QLabel("0.50")
+
+        def _row(name_txt, bar, val_lbl):
+            row = QtWidgets.QHBoxLayout()
+            row.setContentsMargins(0, 0, 0, 0)
+            row.setSpacing(8)
+            name = QtWidgets.QLabel(name_txt)
+            name.setObjectName("hud_name")
+            name.setFixedWidth(34)
+            row.addWidget(name)
+            row.addWidget(bar, 1)
+            val_lbl.setObjectName("hud_val")
+            val_lbl.setFixedWidth(36)
+            val_lbl.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+            row.addWidget(val_lbl)
+            cont = QtWidgets.QWidget()
+            cont.setLayout(row)
+            return cont
+
+        nlay.addWidget(_row("ARO", self._hud_aro_bar, self._hud_aro_val))
+        nlay.addWidget(_row("VAL", self._hud_val_bar, self._hud_val_val))
+        nlay.addWidget(_row("ENG", self._hud_eng_bar, self._hud_eng_val))
+
+        # HR は別行 (バー無し、大きく)
+        self._hud_hr = QtWidgets.QLabel("♥   ---  BPM")
+        self._hud_hr.setObjectName("hud_hr")
+        nlay.addWidget(self._hud_hr)
+
+        # 右下: EQ STATE
+        eqstate = QtWidgets.QFrame()
+        eqstate.setObjectName("hud")
+        elay = QtWidgets.QVBoxLayout(eqstate)
+        elay.setContentsMargins(14, 10, 14, 10)
+        elay.setSpacing(4)
+        eqstate_title = QtWidgets.QLabel("〔 EQ STATE 〕")
+        eqstate_title.setObjectName("hud_title")
+        elay.addWidget(eqstate_title)
+        self._hud_eq = {}
+        for k, emo, name in [("drums", "🥁", "DRM"),
+                              ("bass", "🎸", "BAS"),
+                              ("mid", "🎹", "MID"),
+                              ("vocal", "🎤", "VOC"),
+                              ("high", "🎺", "HI "),
+                              ("air", "🌟", "AIR")]:
+            lbl = QtWidgets.QLabel(f"{emo} {name}  +0.0 dB")
+            lbl.setObjectName("hud_val")
+            self._hud_eq[k] = lbl
+            elay.addWidget(lbl)
+
+        # 配置: 左下 + 右下
+        lay.addWidget(nstate, 1, 0, alignment=QtCore.Qt.AlignBottom | QtCore.Qt.AlignLeft)
+        lay.addWidget(eqstate, 1, 1, alignment=QtCore.Qt.AlignBottom | QtCore.Qt.AlignRight)
+        lay.setRowStretch(0, 1)
+        lay.setColumnStretch(0, 1)
+        lay.setColumnStretch(1, 1)
+        self._restyle_watch_hud(w)
+        return w
+
+    def _restyle_watch_hud(self, w):
+        t = self.theme
+        ss = (
+            f"QFrame#hud {{ background-color: rgba(0,0,0,160); "
+            f"border: 1px solid {t.accent}; border-radius: 10px; }}"
+            f"QLabel#hud_title {{ color: {t.accent}; font-size: 11px; "
+            "font-weight: bold; letter-spacing: 2px; "
+            "background: transparent; }"
+            f"QLabel#hud_name {{ color: {t.text_dim}; "
+            "font-family: 'Consolas', 'JetBrains Mono', monospace; "
+            "font-size: 11px; font-weight: bold; letter-spacing: 1px; "
+            "background: transparent; }"
+            f"QLabel#hud_val {{ color: {t.text_main}; "
+            "font-family: 'Consolas', 'JetBrains Mono', monospace; "
+            "font-size: 12px; background: transparent; }"
+            f"QLabel#hud_hr {{ color: {t.accent}; "
+            "font-family: 'Consolas', 'JetBrains Mono', monospace; "
+            "font-size: 18px; font-weight: bold; "
+            "letter-spacing: 1px; background: transparent; }"
+        )
+        w.setStyleSheet(ss)
+
+    def _update_watch_hud(self, rus, eng, hr, eq_vals):
+        a = rus.get("arousal", 0.5)
+        v = rus.get("valence", 0.5)
+        self._hud_aro_bar.set_value(a)
+        self._hud_val_bar.set_value(v)
+        self._hud_eng_bar.set_value(eng)
+        self._hud_aro_val.setText(f"{a:.2f}")
+        self._hud_val_val.setText(f"{v:.2f}")
+        self._hud_eng_val.setText(f"{eng:.2f}")
+        if hr and hr > 20:
+            self._hud_hr.setText(f"♥  {int(hr):3d} BPM")
+        else:
+            self._hud_hr.setText("♥  ---  BPM")
+        names = {"drums": ("🥁", "DRM"), "bass": ("🎸", "BAS"),
+                 "mid": ("🎹", "MID"), "vocal": ("🎤", "VOC"),
+                 "high": ("🎺", "HI "), "air": ("🌟", "AIR")}
+        for k, lbl in self._hud_eq.items():
+            v_db = eq_vals.get(k, 0.0)
+            emo, nm = names[k]
+            lbl.setText(f"{emo} {nm}  {v_db:+.1f} dB")
 
     # ---- 録画 ----
     def _audio_btn_style(self, running):
@@ -1918,6 +2257,26 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Sea ビュー (表示中のみ) に生体信号を流す
         self._update_sea_state(rus, eng, quality, hr_osc, last_ppg, now)
+
+        # Watch モード HUD 更新
+        if getattr(self, "_mode", "studio") == "watch":
+            self._update_watch_hud(rus, eng, hr_osc, self.audio.get_bands())
+            # Watch では sea_widget を常時駆動 (表示判定不要)
+            if hasattr(self, "sea_widget") and self.sea_widget is not None:
+                if quality:
+                    q_mean = sum(quality) / len(quality)
+                    hsi = max(0.0, min(1.0, (4.0 - q_mean) / 3.0))
+                else:
+                    hsi = 1.0
+                dt_ppg = now - last_ppg if last_ppg else 999
+                fresh = 1.0 if dt_ppg < 3.0 else (
+                    max(0.0, 1.0 - (dt_ppg - 3.0) / 5.0))
+                hr = hr_osc if hr_osc and hr_osc > 20 else None
+                self.sea_widget.set_state(
+                    arousal=rus.get("arousal"),
+                    valence=rus.get("valence"),
+                    engagement=eng,
+                    hr_bpm=hr, hsi=hsi, signal_fresh=fresh)
 
         # CSV 録画
         if self.recording:
