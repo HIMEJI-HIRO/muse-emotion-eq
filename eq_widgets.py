@@ -819,6 +819,19 @@ class InstrumentFader(QtWidgets.QWidget):
         if hasattr(theme, "subscribe"):
             theme.subscribe(lambda *_: self.update())
 
+        # 背景波形アニメ用
+        self._wave_phase = 0.0
+        self._wave_timer = QtCore.QTimer(self)
+        self._wave_timer.timeout.connect(self._advance_wave)
+        self._wave_timer.start(60)   # ~16fps. 軽い動き
+
+    def _advance_wave(self):
+        # 走らせる速度. dB の絶対値が大きいほど早く流れる演出.
+        import math as _m
+        speed = 0.08 + abs(self._db) / max(0.01, self.gain_max) * 0.20
+        self._wave_phase = (self._wave_phase + speed) % (2 * _m.pi)
+        self.update()
+
     def value(self):
         return self._db
 
@@ -904,6 +917,35 @@ class InstrumentFader(QtWidgets.QWidget):
         p.setPen(QtCore.Qt.NoPen)
         p.setBrush(QtGui.QColor("#0e0e10"))
         p.drawRoundedRect(r, 4, 4)
+
+        # --- 背景波形 (アクセント色の細い 3本サイン重ね合わせ) ---
+        import math as _m
+        p.save()
+        # clip を track に
+        clip_path = QtGui.QPainterPath()
+        clip_path.addRoundedRect(r, 4, 4)
+        p.setClipPath(clip_path)
+        amp = r.width() * 0.35   # 振幅は track 幅の 35%
+        cx = r.center().x()
+        for i, (freq, opacity, phase_mul) in enumerate([
+                (0.06, 28, 1.0), (0.10, 18, -1.3), (0.14, 12, 1.7)]):
+            pen = QtGui.QPen(QtGui.QColor(*glow, opacity), 1.0)
+            p.setPen(pen)
+            p.setBrush(QtCore.Qt.NoBrush)
+            path = QtGui.QPainterPath()
+            y0 = r.top()
+            x0 = cx + amp * _m.sin(
+                self._wave_phase * phase_mul + y0 * freq)
+            path.moveTo(x0, y0)
+            steps = int(r.height() / 4)
+            for s in range(1, steps + 1):
+                y = r.top() + s * 4
+                x = cx + amp * _m.sin(
+                    self._wave_phase * phase_mul + y * freq + i * 1.2)
+                path.lineTo(x, y)
+            p.drawPath(path)
+        p.restore()
+
         zero_y = self._db_to_y(0.0)
         p.setPen(QtGui.QPen(QtGui.QColor("#3a3a3c"), 1, QtCore.Qt.DashLine))
         p.drawLine(QtCore.QPointF(r.left() - 3, zero_y),
