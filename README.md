@@ -1,84 +1,100 @@
+<div align="center">
+
 # 🧠🎵 muse-emotion-eq
 
-> **Muse S Athena の EEG / PPG から感情を推定し、音楽の EQ と海の映像をリアルタイムで制御するシステム**
+### **Your brain controls your music. In real time.**
 
-![status](https://img.shields.io/badge/status-MVP-brightgreen)
-![python](https://img.shields.io/badge/python-3.11-blue)
-![platform](https://img.shields.io/badge/platform-Windows-lightgrey)
-![license](https://img.shields.io/badge/license-MIT-green)
+EEG・心拍から感情を推定し、音楽の EQ と没入型映像をリアルタイム制御するデスクトップアプリ
 
----
+[![Status](https://img.shields.io/badge/status-MVP-brightgreen?style=flat-square)](.)
+[![Python](https://img.shields.io/badge/python-3.11-3776AB?style=flat-square&logo=python&logoColor=white)](.)
+[![PyQt5](https://img.shields.io/badge/PyQt5-5.15-41CD52?style=flat-square&logo=qt)](.)
+[![Platform](https://img.shields.io/badge/platform-Windows-0078D6?style=flat-square&logo=windows&logoColor=white)](.)
+[![License](https://img.shields.io/badge/license-MIT-yellow?style=flat-square)](LICENSE)
+[![AI-Assisted](https://img.shields.io/badge/AI--assisted-Claude-D97757?style=flat-square)](docs/ai_assisted_dev.md)
 
-## ✨ 特徴
+<img src="demo/demo_thumb.gif" width="720" alt="demo">
 
-- **🧠 EEG 駆動の 6-band EQ** — Arousal / Valence / Engagement に応じて Drums / Bass / Mid / Vocals / High / Air のゲインを自動追従
-- **🌊 Emotional Seascape** — 感情で Calm / Golden / Underwater の海映像が cross-fade。HR で海面が脈動
-- **🎚 Manual / Auto モード** — 手動フェーダ操作と EEG 自動制御を切替
-- **🎨 2軸テーマ** — Accent 15色 × BG 6パレット = 90通り
-- **📡 Mind Monitor OSC** — Muse S を Bluetooth → スマホ → PC へ無線伝送
-- **🤖 AI 共同開発** — Claude (Anthropic) と二人三脚で 2 週間で MVP
+[**🚀 Quick Start**](#-quick-start) · [**🎬 Demo**](#-demo) · [**🏗 Architecture**](#-architecture) · [**📊 Accuracy Notes**](docs/muse_accuracy_notes.md) · [**🤖 AI Workflow**](docs/ai_assisted_dev.md)
 
----
-
-## 🎬 デモ
-
-![demo](demo/demo_thumb.gif)
-
-> *デモ動画は [demo/demo_1min.mp4](demo/demo_1min.mp4) を参照*
+</div>
 
 ---
 
-## 🏗 アーキテクチャ
+## ✨ Why this project
+
+> **「感情で音楽が変わる体験」を、自分の脳波と心拍で作る**
+
+Sony が掲げる Vital Sensing × Affective Computing × Audio の交差点を、**MVP として 2 週間で動かしました**。Muse S Athena 1 台で取れる EEG / PPG から感情を推定し、それを **音 (EQ)** と **映像 (Sea ビュー)** の両方に同時反映させます。
+
+---
+
+## 🎬 Demo
+
+| Studio (分析) | Listen (操作) | Watch (没入) |
+|:---:|:---:|:---:|
+| ![studio](docs/images/ui_studio.png) | ![listen](docs/images/ui_listen.png) | ![watch](docs/images/ui_watch.png) |
+| Raw EEG・スペクトログラム・Russell モデル | リボン感情バー + 楽器サークル | 神経網オーブ + 海背景 |
+
+> ※ スクショは追加予定. 1 分デモ動画: [demo/demo_1min.mp4](demo/demo_1min.mp4)
+
+---
+
+## ⚡ Features
+
+| | |
+|---|---|
+| 🧠 **EEG → EQ Auto** | Arousal / Valence / Engagement に応じて 6 バンド (Drums / Bass / Mid / Vocals / High / Air) のゲインを自動追従 |
+| 🌊 **Emotional Seascape** | Calm / Golden / Storm の 3 シーン動画が感情でクロスフェード切替。HR で海面が脈動 |
+| 🎚 **Manual / Auto モード** | 手動フェーダ操作と EEG 自動制御を切替 |
+| 🎨 **Customizable Theme** | アクセント 15 色 × 背景 6 パレット = **90 通り** |
+| 📡 **Mind Monitor OSC** | Muse S を Bluetooth 経由でスマホ → PC へ無線伝送 |
+| 🤖 **AI 共同開発** | Claude (Anthropic) と 2 週間で MVP |
+
+---
+
+## 🚀 Quick Start
+
+```powershell
+# 1. Clone
+git clone https://github.com/HIMEJI-HIRO/muse-emotion-eq.git
+cd muse-emotion-eq
+
+# 2. Install deps
+pip install -r requirements.txt
+
+# 3. Launch
+python realtime_monitor.py
+```
+
+**前提**:
+- Windows 10/11 + Python 3.11 (anaconda3 推奨)
+- Muse S Athena + Mind Monitor (iOS/Android)
+- VB-CABLE Virtual Audio Device
+
+詳細セットアップ手順は [📖 docs/setup_windows.md](docs/setup_windows.md) を参照.
+
+---
+
+## 🏗 Architecture
 
 ```mermaid
 graph LR
-    A[Muse S Athena<br/>EEG + PPG] -->|Bluetooth| B[Mind Monitor<br/>iOS/Android]
-    B -->|OSC :5000| C[realtime_monitor.py]
+    A[Muse S Athena<br/>EEG + PPG] -->|Bluetooth| B[Mind Monitor]
+    B -->|OSC :5000| C[Python App]
     C --> D[Russell + Engagement<br/>感情推定]
-    D --> E[ReflectController<br/>6-band 目標値]
-    F[Spotify] -->|VB-CABLE| G[audio_engine<br/>pedalboard EQ]
+    D --> E[ReflectController<br/>EQ マッピング]
+    F[Spotify] -->|VB-CABLE| G[pedalboard<br/>6-band EQ + Reverb]
     E --> G
-    G -->|出力| H[WF-1000XM5]
+    G --> H[🎧 WF-1000XM5]
     D --> I[SeaWidget<br/>動画 + Overlay]
 ```
 
----
-
-## 🚀 1 分で起動 (Windows)
-
-### 前提
-- Windows 10/11
-- Python 3.11 (anaconda3 推奨)
-- Muse S Athena (Mind Monitor アプリ入り iPhone/Android)
-- VB-CABLE Virtual Audio Device
-
-### セットアップ
-
-```powershell
-# 1. リポジトリ取得
-git clone https://github.com/HIROHISA-S/muse-emotion-eq.git
-cd muse-emotion-eq
-
-# 2. 依存インストール
-pip install -r requirements.txt
-```
-
-### 起動手順
-
-1. **VB-CABLE** インストール → Spotify の出力先を `CABLE Input` に変更
-2. **Muse S** を Bluetooth で iPhone/Android に接続 → **Mind Monitor** で OSC 送信先を `<PC_IP>:5000` に設定
-3. アプリ起動:
-   ```powershell
-   python realtime_monitor.py
-   ```
-4. ヘッダの **`🎵 Audio ON`** を押して、出力デバイスに `WF-1000XM5` (または好きなヘッドホン) を選択
-5. Spotify で再生開始 → EEG で EQ が動き始める
-
-詳細: [docs/setup_windows.md](docs/setup_windows.md)
+詳細: [docs/architecture.md](docs/architecture.md)
 
 ---
 
-## 🧪 信号処理
+## 🧪 Signal Processing
 
 | 指標 | 計算 | 用途 |
 |---|---|---|
@@ -86,95 +102,101 @@ pip install -r requirements.txt
 | **Valence** | 前頭 α 左右差 (AF7/AF8) | EQ Air / Reverb / シーン選択 |
 | **Engagement** | β / α 比 | EQ Mid / Vocals |
 | **HR (BPM)** | PPG ピーク検出 (0.7–3 Hz BP) | 海面の脈動リング |
-| **HSI** | Muse horseshoe (1=Good, 4=Bad) | 映像の霧エフェクト |
+| **HSI** | Muse horseshoe (1 Good — 4 Bad) | 映像の霧エフェクト |
 
 詳細: [docs/signal_processing.md](docs/signal_processing.md)
 
 ---
 
-## 📊 Muse S Athena の精度について
+## 📊 Honest Accuracy Review
 
-正直な評価を [docs/muse_accuracy_notes.md](docs/muse_accuracy_notes.md) にまとめている。要点:
+ポートフォリオには **「できること」と同じくらい「できないこと」** を書きました。
 
-- **HR は ★★★★★** (PPG 信頼性高)
-- **Engagement (β/α) は ★★★** (比率なので接触ムラに強い)
-- **Arousal は ★★☆** (噛み締め・まばたきに弱い)
-- **Valence は ★☆** (前頭 α 左右差 2点だと再現性低)
+| 信号 | 信頼度 |
+|---|:---:|
+| **HR (BPM, PPG)** | ★★★★★ |
+| **β/α 比 (Engagement)** | ★★★ |
+| **Arousal** | ★★☆ |
+| **Valence (前頭 α 左右差)** | ★☆ |
 
-この限界を踏まえ、UI 設計は **Valence にメインの重みを置かず、HR を主役にする** 方針を取った。
+→ Valence は弱いため UI 側で **slow EMA + ヒステリシス + 最小滞留時間** を入れて誤認による画面バタつきを抑制。
+詳細: [docs/muse_accuracy_notes.md](docs/muse_accuracy_notes.md)
 
 ---
 
-## 🛠 技術スタック
+## 🛠 Tech Stack
 
-| カテゴリ | ライブラリ |
+| Layer | Library |
 |---|---|
 | GUI | PyQt5, pyqtgraph |
 | 信号処理 | NumPy, SciPy (Butterworth, Welch) |
-| 音声 DSP | pedalboard (Spotify R&D), sounddevice |
-| 動画背景 | OpenCV (cv2.VideoCapture) |
-| OSC 受信 | python-osc |
-| EEG ヘッドセット | Muse S Athena + Mind Monitor |
+| 音声 DSP | [pedalboard](https://github.com/spotify/pedalboard) (Spotify R&D), sounddevice |
+| 動画背景 | OpenCV |
+| OSC | python-osc |
+| EEG | Muse S Athena + Mind Monitor |
 
 ---
 
-## 📁 リポジトリ構成
+## 📁 Repository Structure
 
 ```
 muse-emotion-eq/
-├── realtime_monitor.py       # メインエントリ (PyQt5 GUI + OSC 受信)
-├── audio_engine.py           # VB-CABLE → pedalboard → 出力
-├── eq_controllers.py         # 感情 → EQ マッピング (ReflectController)
-├── eq_widgets.py             # 6-band 楽器フェーダ Widget
-├── sea_widget.py             # Emotional Seascape (動画 + overlay)
-├── theme.py                  # Accent × BG テーマ管理
-│
-├── assets/sea/               # シーン動画 (Git LFS)
-├── docs/                     # 設計ドキュメント
-├── demo/                     # デモ動画・スクショ
-├── scripts/                  # 環境チェック・手動テスト
-└── archive/                  # 過去の試行錯誤 (deprecated)
+├── realtime_monitor.py      # メインエントリ (PyQt5 GUI + OSC)
+├── audio_engine.py          # VB-CABLE → pedalboard → 出力
+├── eq_controllers.py        # 感情 → EQ マッピング
+├── eq_widgets.py            # 6-band 楽器フェーダ
+├── sea_widget.py            # Emotional Seascape (動画 + overlay)
+├── theme.py                 # 2軸テーマ (Accent × BG)
+├── assets/sea/              # シーン動画 (Git LFS)
+├── docs/                    # 設計ドキュメント
+├── demo/                    # デモ動画・スクショ
+└── scripts/                 # 環境チェック・診断ツール
 ```
 
 ---
 
-## 🎓 設計判断ログ
+## 🗺 Roadmap
 
-開発中に下した主な判断と理由:
-
-- **6-band Mixer から Sea ビューへ重心移動** ([docs/design_decisions.md](docs/design_decisions.md))
-- **Storm シーン → Underwater シーンに置換** (体験を優しく)
-- **動画は QMediaPlayer ではなく OpenCV** (Windows DirectShow の H.264 失敗回避)
-- **シーン切替に hysteresis + 6秒滞留** (EEG ノイズ対策)
-
----
-
-## 🗺 ロードマップ
-
-- [x] Phase 0: 可視化基盤 + Muse 受信
-- [x] Phase 1: 6-band EQ + 感情自動制御
-- [x] Phase 1.5: Emotional Seascape (Calm / Golden / Storm)
-- [ ] Phase 2: Underwater シーン置換
-- [ ] Phase 2: CSV セッションリプレイ機能
-- [ ] Phase 3: 個人 EEG キャリブレーション (ML)
+- [x] **Phase 0** — Muse 受信 / 可視化基盤
+- [x] **Phase 1** — 6-band EQ + 感情自動制御
+- [x] **Phase 1.5** — Emotional Seascape (Calm / Golden / Storm)
+- [x] **Phase 2 — UI 大改修** — Studio / Listen / Watch 3 モード, パーティクル EEG, 神経網オーブ, リボン感情バー
+- [ ] **Phase 3** — Underwater シーン追加 (HR 駆動の海中映像 3 段階)
+- [ ] **Phase 4** — CSV セッションリプレイ機能
+- [ ] **Phase 5** — 個人 EEG キャリブレーション (ML)
 
 ---
 
-## 🤖 AI 共同開発について
+## 🤖 AI Workflow
 
-このプロジェクトは **Claude (Anthropic)** との対話駆動で開発した。
-人間が**仕様判断・UX 設計**を、AI が**実装**を担当する分業。
-工程記録: [docs/ai_assisted_dev.md](docs/ai_assisted_dev.md)
-
----
-
-## 📜 ライセンス
-
-MIT License — [LICENSE](LICENSE) 参照
+このプロジェクトは **人間が意思決定 → Claude (Anthropic) が実装** の分業で開発しました。
+工程の正直な記録: [docs/ai_assisted_dev.md](docs/ai_assisted_dev.md)
 
 ---
 
-## 👤 作者
+## 📝 Design Decisions
 
-**HIROHISA-S** (Himeji Hiro)
-Sony B64 (Vital Sensing / Affective Computing) 部門応募ポートフォリオ
+実装中に下した主要な意思決定の理由をまとめました:
+- なぜ 6-band フェーダから Sea ビューへ重心を移したか
+- なぜ Storm を Underwater に置換予定か
+- なぜ QMediaPlayer ではなく OpenCV を選んだか
+- なぜ Watch HUD に 8 角プリズムを使ったか
+
+詳細: [docs/design_decisions.md](docs/design_decisions.md)
+
+---
+
+## 📜 License
+
+[MIT](LICENSE) — 自由に fork / 改変 / 商用利用可
+
+---
+
+<div align="center">
+
+### Built by [@HIMEJI-HIRO](https://github.com/HIMEJI-HIRO)
+
+For **Sony B64** (Vital Sensing / Affective Computing) Portfolio
+🧠 + 🎵 + 🤖
+
+</div>
