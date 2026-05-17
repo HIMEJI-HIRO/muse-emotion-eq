@@ -1533,7 +1533,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.focus_layout.setContentsMargins(0, 0, 0, 0)
         self.stack.addWidget(self.focus_page)
 
-        # 音声エンジン (VB-CABLE → pedalboard → WF-XM5)
+        # 音声エンジン (VB-CABLE → pedalboard → ヘッドホン/スピーカー)
         # カード生成より前に作る (EQ カードが self.audio を参照するため)
         self.audio = AudioEngine()
 
@@ -1578,7 +1578,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.card_positions["emotion"] = (2, 1)
 
         eq_w = self._build_eq_card()
-        self.cards["eq"] = Card("🎛  Adaptive EQ  |  VB-CABLE → WF-1000XM5",
+        self.cards["eq"] = Card("🎛  Adaptive EQ  |  VB-CABLE → Output",
                                 eq_w, "eq", theme=self.theme,
                                 accent_border=True)
         # EQ は 3行をまたぐ右端カラム

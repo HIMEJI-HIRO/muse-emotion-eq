@@ -25,7 +25,7 @@ iOS / Android で **Mind Monitor** を購入 (有料、~1500円)。
 2. Windows サウンド設定で:
    - **Spotify の出力**: `CABLE Input (VB-Audio Virtual Cable)`
    - **本アプリの入力**: 自動検出される
-   - **本アプリの出力**: `WF-1000XM5` などお好みのヘッドホン
+   - **本アプリの出力**: お好みのヘッドホン or スピーカー
 
 ## 4. Python 環境
 

@@ -8,7 +8,7 @@ graph TB
         Muse[Muse S Athena<br/>4ch EEG + PPG]
         Phone[iPhone/Android]
         VBCable[VB-CABLE<br/>仮想オーディオ]
-        WF[WF-1000XM5]
+        WF[Bluetooth Headphones]
         Spotify[Spotify Desktop]
     end
 

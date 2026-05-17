@@ -1,7 +1,7 @@
 """
 audio_engine.py
 ===============
-VB-CABLE → pedalboard (6-band EQ + Reverb) → ヘッドホン (WF-1000XM5).
+VB-CABLE → pedalboard (6-band EQ + Reverb) → ヘッドホン/スピーカー.
 
 EQ バンドは「楽器別」に配置:
   drums  80 Hz  LowShelf    キックの胴
@@ -31,13 +31,12 @@ except ImportError as e:
 
 SAMPLE_RATE = 48000
 BLOCK_SIZE = 1024          # 512 → 1024 (≈21ms) 音飛び対策
-LATENCY_HINT = "high"      # Bluetooth (WF-1000XM5) は低 latency 不可
+LATENCY_HINT = "high"      # Bluetooth は低 latency 不可
 CHANNELS = 2
 
 INPUT_KEYWORDS = ["CABLE Output"]
 # Bluetooth ヘッドホンは OS によって名称が変わるので候補を広く.
 OUTPUT_KEYWORDS = [
-    "WF-1000XM5", "WF-1000",
     "Headphones", "ヘッドホン", "Headphone",
     "Speakers", "スピーカー",
 ]
@@ -303,7 +302,7 @@ class AudioEngine:
             if out_idx is None:
                 self.last_error = (
                     "出力デバイスが見つかりません。"
-                    "WF-1000XM5 を接続するかヘッダの Output ▾ から選択してください。")
+                    "ヘッドホン/スピーカーを接続するかヘッダの Output ▾ から選択してください。")
                 return False
 
         # 出力と同じ host API 上の CABLE Output を優先で選ぶ

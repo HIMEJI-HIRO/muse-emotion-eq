@@ -39,7 +39,7 @@ def check_audio():
         import sounddevice as sd
         devs = sd.query_devices()
         cable_in = any("CABLE Output" in d["name"] for d in devs)
-        wf_out = any("WF-1000" in d["name"] or "Headphone" in d["name"]
+        wf_out = any("Headphone" in d["name"] or "Speaker" in d["name"]
                      for d in devs)
         print(f"  CABLE Output (入力候補): {'OK' if cable_in else 'NG'}")
         print(f"  Headphone系 (出力候補): {'OK' if wf_out else 'NG'}")

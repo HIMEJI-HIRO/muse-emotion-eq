@@ -2,12 +2,12 @@
 test_audio_eq.py
 ================
 VB-CABLE から音声を受け取り、pedalboard で EQ を適用して
-ヘッドホン (WF-1000XM5) に出力する最小プロトタイプ。
+ヘッドホン/スピーカーに出力する最小プロトタイプ。
 
 前提:
   - VB-CABLE インストール済み
   - Spotify の出力を "CABLE Input (VB-Audio Virtual Cable)" に設定済み
-  - WF-1000XM5 が PC にペアリング済み
+  - 出力デバイス (ヘッドホン / スピーカー) が接続済み
 
 依存:
   pip install pedalboard sounddevice
@@ -43,8 +43,8 @@ def find_device(name_part, kind):
 
 
 def pick_output_device():
-    """WF-1000XM5 → ヘッドホン → デフォルト の順で検索."""
-    for kw in ["WF-1000XM5", "WF-1000", "ヘッドホン", "Headphone"]:
+    """ヘッドホン → デフォルト の順で検索."""
+    for kw in ["ヘッドホン", "Headphone", "Headphones", "Speakers", "スピーカー"]:
         idx, dev = find_device(kw, "output")
         if idx is not None:
             return idx, dev
@@ -151,7 +151,7 @@ def main():
     except Exception as e:
         print(f"\nStream error: {e}")
         print("\nヒント:")
-        print("  - WF-1000XM5 が Bluetooth で接続されているか確認")
+        print("  - 出力デバイス (ヘッドホン/スピーカー) が接続されているか確認")
         print("  - Spotify の出力先が CABLE Input になっているか確認")
         print("  - サンプルレートが合わない場合: Windowsサウンド設定で両デバイスを 48000 Hz に揃える")
 
