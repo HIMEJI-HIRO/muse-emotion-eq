@@ -98,10 +98,16 @@ REC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "recordings")
 # カラーマップ (Mind Monitor 風 jet)
 # ======================================================================
 def make_jet_like_cmap():
-    pos = np.array([0.0, 0.15, 0.35, 0.55, 0.75, 1.0])
+    """ネオン rainbow colormap (mockup 風: 紫 → 青 → 緑 → 黄 → 赤)."""
+    pos = np.array([0.0, 0.18, 0.36, 0.55, 0.75, 0.90, 1.0])
     colors = np.array([
-        [0, 0, 0, 255], [0, 0, 160, 255], [0, 200, 120, 255],
-        [255, 255, 0, 255], [255, 120, 0, 255], [220, 0, 0, 255],
+        [12, 8, 30, 255],       # 黒紫 (背景)
+        [80, 30, 180, 255],     # 深紫
+        [50, 100, 240, 255],    # シアン青
+        [50, 220, 180, 255],    # ターコイズ緑
+        [240, 220, 60, 255],    # 黄
+        [255, 120, 50, 255],    # オレンジ
+        [255, 50, 90, 255],     # ピンク赤
     ], dtype=np.uint8)
     return pg.ColorMap(pos, colors)
 
@@ -296,6 +302,107 @@ def compute_arousal_only(bands, quality):
 # ======================================================================
 # カード
 # ======================================================================
+class _HoverInfoPopup(QtWidgets.QFrame):
+    """カード hover で出るフローティング情報パネル.
+    accent neon border + フェードイン + 軽い上昇アニメ."""
+
+    def __init__(self, theme=None, parent=None):
+        super().__init__(parent, QtCore.Qt.ToolTip
+                         | QtCore.Qt.FramelessWindowHint)
+        self.setAttribute(QtCore.Qt.WA_TranslucentBackground, True)
+        self.setAttribute(QtCore.Qt.WA_ShowWithoutActivating, True)
+        self._theme = theme
+        self._title = ""
+        self._body = ""
+        self._anim = None
+        # 内側 QLabel 構造
+        lay = QtWidgets.QVBoxLayout(self)
+        lay.setContentsMargins(16, 12, 16, 14)
+        lay.setSpacing(6)
+        self._title_lbl = QtWidgets.QLabel()
+        self._title_lbl.setObjectName("hov_title")
+        self._body_lbl = QtWidgets.QLabel()
+        self._body_lbl.setObjectName("hov_body")
+        self._body_lbl.setWordWrap(True)
+        lay.addWidget(self._title_lbl)
+        lay.addWidget(self._body_lbl)
+        self.setMinimumWidth(280)
+        self.setMaximumWidth(360)
+        # DropShadow accent
+        eff = QtWidgets.QGraphicsDropShadowEffect(self)
+        eff.setBlurRadius(28)
+        eff.setOffset(0, 4)
+        self._shadow = eff
+        self.setGraphicsEffect(eff)
+        self._restyle()
+
+    def _restyle(self):
+        t = self._theme
+        if t is None:
+            accent = "#1abc9c"
+            bg = "rgba(10, 10, 16, 235)"
+            text_main = "#e8e8e8"
+            text_dim = "#9a9a9a"
+        else:
+            accent = t.accent
+            bg = "rgba(10, 10, 16, 235)"
+            text_main = t.text_main
+            text_dim = t.text_dim
+        self.setStyleSheet(
+            f"_HoverInfoPopup {{ background-color: {bg}; "
+            f"border: 2px solid {accent}; border-radius: 10px; }}"
+            f"QLabel#hov_title {{ color: {accent}; font-size: 13px; "
+            "font-weight: bold; letter-spacing: 1px; "
+            "background: transparent; border: none; }"
+            f"QLabel#hov_body {{ color: {text_main}; font-size: 11px; "
+            "background: transparent; border: none; "
+            "line-height: 1.4; }"
+        )
+        ar = QtGui.QColor(accent).red()
+        ag = QtGui.QColor(accent).green()
+        ab = QtGui.QColor(accent).blue()
+        self._shadow.setColor(QtGui.QColor(ar, ag, ab, 200))
+
+    def set_content(self, title, body):
+        self._title_lbl.setText(title)
+        self._body_lbl.setText(body)
+        self.adjustSize()
+
+    def show_at(self, global_pos):
+        """位置調整して表示 + フェードイン."""
+        self.move(global_pos)
+        self.show()
+        self.raise_()
+        # 上昇 + フェード
+        start_geom = self.geometry()
+        start_geom_up = QtCore.QRect(
+            start_geom.x(), start_geom.y() + 12,
+            start_geom.width(), start_geom.height())
+        # スタート位置 (12px 下) → 終了位置 (元)
+        self.setGeometry(start_geom_up)
+        anim = QtCore.QPropertyAnimation(self, b"geometry", self)
+        anim.setDuration(180)
+        anim.setStartValue(start_geom_up)
+        anim.setEndValue(start_geom)
+        anim.setEasingCurve(QtCore.QEasingCurve.OutCubic)
+        anim.start(QtCore.QAbstractAnimation.DeleteWhenStopped)
+        self._anim = anim
+
+
+# Module-level singleton (lazy)
+_HOVER_POPUP = None
+
+
+def _get_hover_popup(theme):
+    global _HOVER_POPUP
+    if _HOVER_POPUP is None:
+        _HOVER_POPUP = _HoverInfoPopup(theme=theme)
+    else:
+        _HOVER_POPUP._theme = theme
+        _HOVER_POPUP._restyle()
+    return _HOVER_POPUP
+
+
 class Card(QtWidgets.QFrame):
     expand_requested = QtCore.pyqtSignal(str)
 
@@ -306,6 +413,8 @@ class Card(QtWidgets.QFrame):
         self.is_expanded = False
         self._theme = theme
         self._accent_border = accent_border
+        self._hover_title = ""
+        self._hover_body = ""
         self.setObjectName("card")
         shadow = QtWidgets.QGraphicsDropShadowEffect(self)
         shadow.setBlurRadius(18)
@@ -382,6 +491,354 @@ class Card(QtWidgets.QFrame):
 
     def set_expanded(self, expanded):
         self.is_expanded = expanded
+
+    def set_hover_info(self, title, body):
+        """カードに対する hover ポップアップ用 情報セット."""
+        self._hover_title = title
+        self._hover_body = body
+
+    def enterEvent(self, event):
+        if self._hover_title or self._hover_body:
+            popup = _get_hover_popup(self._theme)
+            popup.set_content(self._hover_title, self._hover_body)
+            # カード右上に表示
+            g = self.mapToGlobal(QtCore.QPoint(self.width() + 10, 0))
+            popup.show_at(g)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        popup = _get_hover_popup(self._theme)
+        popup.hide()
+        super().leaveEvent(event)
+
+
+class _StatusMeter(QtWidgets.QWidget):
+    """Watch status bar 用の段ブロックメータ. value(0..1) で本数増える."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._value = 0.3
+        self._accent = QtGui.QColor("#1abc9c")
+        self._n_blocks = 14
+
+    def set_value(self, v):
+        v = max(0.0, min(1.0, float(v)))
+        if abs(v - self._value) < 0.01:
+            return
+        self._value = v
+        self.update()
+
+    def set_accent(self, hex_color):
+        self._accent = QtGui.QColor(hex_color)
+        self.update()
+
+    def paintEvent(self, event):
+        qp = QtGui.QPainter(self)
+        qp.setRenderHint(QtGui.QPainter.Antialiasing, True)
+        w = self.width()
+        h = self.height()
+        gap = 2
+        block_w = (w - gap * (self._n_blocks - 1)) / self._n_blocks
+        active = int(round(self._n_blocks * self._value))
+        a = self._accent
+        for i in range(self._n_blocks):
+            x = i * (block_w + gap)
+            if i < active:
+                col = QtGui.QColor(a.red(), a.green(), a.blue(), 230)
+            else:
+                col = QtGui.QColor(a.red(), a.green(), a.blue(), 40)
+            qp.setPen(QtCore.Qt.NoPen)
+            qp.setBrush(col)
+            qp.drawRoundedRect(QtCore.QRectF(x, 0, block_w, h), 1.5, 1.5)
+        qp.end()
+
+
+class SplashScreen(QtWidgets.QWidget):
+    """起動時スプラッシュ. 回路パターン + neon タイトル + プログレスバー."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent, QtCore.Qt.SplashScreen
+                          | QtCore.Qt.FramelessWindowHint
+                          | QtCore.Qt.WindowStaysOnTopHint)
+        self.setAttribute(QtCore.Qt.WA_TranslucentBackground, False)
+        self.setFixedSize(720, 380)
+        # 中央寄せ
+        scr = QtWidgets.QApplication.primaryScreen().availableGeometry()
+        self.move(scr.center().x() - self.width() // 2,
+                  scr.center().y() - self.height() // 2)
+        self._progress = 0.0
+        self._circuit = None
+        circuit_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "assets", "bg", "bg_circuit.png")
+        if os.path.exists(circuit_path):
+            self._circuit = QtGui.QImage(circuit_path)
+        # ロード文言
+        self._status_text = "Initializing..."
+        # 自動進行タイマ
+        self._timer = QtCore.QTimer(self)
+        self._timer.timeout.connect(self._tick)
+        self._timer.start(40)
+
+    def set_progress(self, p, text=None):
+        self._progress = max(0.0, min(1.0, float(p)))
+        if text is not None:
+            self._status_text = text
+        self.update()
+
+    def _tick(self):
+        # 自動で 0→1 (約 1.6 秒)
+        if self._progress < 1.0:
+            self._progress = min(1.0, self._progress + 0.025)
+            self.update()
+
+    def paintEvent(self, event):
+        qp = QtGui.QPainter(self)
+        qp.setRenderHint(QtGui.QPainter.Antialiasing, True)
+        w = self.width()
+        h = self.height()
+        accent = QtGui.QColor("#1abc9c")
+        # 背景 (暗い)
+        qp.fillRect(self.rect(), QtGui.QColor(8, 8, 14))
+        # 回路パターン (あれば被せる、暗めに)
+        if self._circuit is not None and not self._circuit.isNull():
+            qp.setOpacity(0.55)
+            ar = self._circuit.width() / max(1, self._circuit.height())
+            dst_r = w / max(1, h)
+            if ar > dst_r:
+                dh = h
+                dw = int(dh * ar)
+                x = (w - dw) // 2
+                y = 0
+            else:
+                dw = w
+                dh = int(dw / ar)
+                x = 0
+                y = (h - dh) // 2
+            qp.drawImage(QtCore.QRectF(x, y, dw, dh), self._circuit)
+            qp.setOpacity(1.0)
+            # 中央暗ぼかし
+            grad = QtGui.QRadialGradient(QtCore.QPointF(w / 2, h / 2),
+                                          w * 0.6)
+            grad.setColorAt(0.0, QtGui.QColor(0, 0, 0, 130))
+            grad.setColorAt(1.0, QtGui.QColor(0, 0, 0, 220))
+            qp.fillRect(self.rect(), grad)
+        # 外周 neon border
+        border_pen = QtGui.QPen(accent, 2)
+        qp.setPen(border_pen)
+        qp.setBrush(QtCore.Qt.NoBrush)
+        qp.drawRoundedRect(QtCore.QRectF(1, 1, w - 2, h - 2), 12, 12)
+
+        # ロゴ (絵文字 + タイトル)
+        emoji_font = QtGui.QFont()
+        emoji_font.setPointSize(56)
+        qp.setFont(emoji_font)
+        qp.setPen(QtGui.QColor(240, 240, 240))
+        qp.drawText(QtCore.QRectF(0, 60, w, 80),
+                    QtCore.Qt.AlignCenter, "🧠")
+        # タイトル
+        title_font = QtGui.QFont()
+        title_font.setPointSize(28)
+        title_font.setBold(True)
+        title_font.setLetterSpacing(QtGui.QFont.AbsoluteSpacing, 4)
+        qp.setFont(title_font)
+        qp.setPen(accent)
+        qp.drawText(QtCore.QRectF(0, 150, w, 50),
+                    QtCore.Qt.AlignCenter, "EEG ADAPTIVE EQ")
+        # サブタイトル
+        sub_font = QtGui.QFont()
+        sub_font.setPointSize(11)
+        sub_font.setLetterSpacing(QtGui.QFont.AbsoluteSpacing, 2)
+        qp.setFont(sub_font)
+        qp.setPen(QtGui.QColor(180, 180, 180))
+        qp.drawText(QtCore.QRectF(0, 200, w, 24),
+                    QtCore.Qt.AlignCenter,
+                    "Vital Sensing  ×  Affective Computing  ×  Audio")
+
+        # プログレスバー
+        bar_w = int(w * 0.55)
+        bar_h = 6
+        bar_x = (w - bar_w) // 2
+        bar_y = h - 70
+        qp.setPen(QtCore.Qt.NoPen)
+        qp.setBrush(QtGui.QColor(255, 255, 255, 30))
+        qp.drawRoundedRect(QtCore.QRectF(bar_x, bar_y, bar_w, bar_h),
+                            3, 3)
+        fill_w = int(bar_w * self._progress)
+        if fill_w > 1:
+            grad = QtGui.QLinearGradient(bar_x, 0, bar_x + bar_w, 0)
+            grad.setColorAt(0.0, QtGui.QColor(accent.red(), accent.green(),
+                                               accent.blue(), 230))
+            grad.setColorAt(1.0, QtGui.QColor(255, 255, 255, 240))
+            qp.setBrush(grad)
+            qp.drawRoundedRect(QtCore.QRectF(bar_x, bar_y, fill_w, bar_h),
+                                3, 3)
+        # ステータステキスト
+        status_font = QtGui.QFont("Consolas")
+        status_font.setPointSize(9)
+        status_font.setLetterSpacing(QtGui.QFont.AbsoluteSpacing, 1)
+        qp.setFont(status_font)
+        qp.setPen(QtGui.QColor(160, 160, 160))
+        qp.drawText(QtCore.QRectF(bar_x, bar_y + 10, bar_w, 16),
+                    QtCore.Qt.AlignLeft, self._status_text)
+        qp.drawText(QtCore.QRectF(bar_x, bar_y + 10, bar_w, 16),
+                    QtCore.Qt.AlignRight,
+                    f"{int(self._progress * 100):3d}%")
+        qp.end()
+
+
+class _MatrixRain(QtWidgets.QWidget):
+    """Matrix 風 binary rain. Watch モードの背景装飾."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents, True)
+        self.setAttribute(QtCore.Qt.WA_TranslucentBackground, True)
+        self._accent = QtGui.QColor(120, 230, 255)
+        self._opacity = 0.18   # うるさかったので減らす
+        self._columns = []   # list of (x, head_y, speed, length, chars)
+        self._w = 0
+        self._h = 0
+        self._timer = QtCore.QTimer(self)
+        self._timer.timeout.connect(self._tick)
+        self._timer.start(60)   # ~16fps 軽量
+        self._last_tick = time.time()
+        self._initialized = False
+
+    def set_accent(self, hex_color):
+        self._accent = QtGui.QColor(hex_color)
+
+    def _init_columns(self):
+        import random as _r
+        self._columns = []
+        col_w = 28   # 列幅を 14→28 で密度半減
+        for x in range(0, self._w, col_w):
+            length = _r.randint(4, 12)   # 長さも短く
+            chars = [_r.choice("01") for _ in range(length)]
+            self._columns.append({
+                "x": x,
+                "y": _r.uniform(-self._h, 0),
+                "speed": 40 + _r.uniform(0, 80),
+                "length": length,
+                "chars": chars,
+            })
+        self._initialized = True
+
+    def resizeEvent(self, event):
+        if self.width() != self._w or self.height() != self._h:
+            self._w, self._h = self.width(), self.height()
+            self._init_columns()
+        super().resizeEvent(event)
+
+    def _tick(self):
+        import random as _r
+        if not self._initialized and self._w > 0:
+            self._init_columns()
+        now = time.time()
+        dt = max(0.001, now - self._last_tick)
+        self._last_tick = now
+        for col in self._columns:
+            col["y"] += col["speed"] * dt
+            # 画面外に出たらリセット
+            if col["y"] - col["length"] * 14 > self._h:
+                col["y"] = -_r.uniform(50, 200)
+                col["chars"] = [_r.choice("01") for _ in range(col["length"])]
+        self.update()
+
+    def paintEvent(self, event):
+        qp = QtGui.QPainter(self)
+        qp.setRenderHint(QtGui.QPainter.Antialiasing, False)
+        font = QtGui.QFont("Consolas", 10, QtGui.QFont.Bold)
+        qp.setFont(font)
+        a = self._accent
+        for col in self._columns:
+            x = col["x"]
+            y = col["y"]
+            length = col["length"]
+            for i, ch in enumerate(col["chars"]):
+                cy = y - i * 14
+                if cy < -14 or cy > self._h + 14:
+                    continue
+                # 先頭 (i=0) が一番明るく、下に行くほど薄く
+                t = i / max(1, length - 1)
+                if i == 0:
+                    qp.setPen(QtGui.QColor(255, 255, 255,
+                                            int(220 * self._opacity)))
+                else:
+                    alpha = int((1.0 - t) * 200 * self._opacity)
+                    qp.setPen(QtGui.QColor(a.red(), a.green(), a.blue(),
+                                            alpha))
+                qp.drawText(int(x), int(cy), ch)
+        qp.end()
+
+
+class _TronGrid(QtWidgets.QWidget):
+    """Tron 風遠近 wireframe グリッド床. Watch モードの背景装飾."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents, True)
+        self.setAttribute(QtCore.Qt.WA_TranslucentBackground, True)
+        self._accent = QtGui.QColor(120, 230, 255)
+        self._opacity = 0.45
+        self._phase = 0.0
+        self._timer = QtCore.QTimer(self)
+        self._timer.timeout.connect(self._tick)
+        self._timer.start(50)
+
+    def set_accent(self, hex_color):
+        self._accent = QtGui.QColor(hex_color)
+
+    def _tick(self):
+        self._phase = (self._phase + 0.5) % 40.0
+        self.update()
+
+    def paintEvent(self, event):
+        qp = QtGui.QPainter(self)
+        qp.setRenderHint(QtGui.QPainter.Antialiasing, True)
+        w = self.width()
+        h = self.height()
+        # 下半分にパースペクティブグリッド
+        horizon_y = int(h * 0.55)
+        bottom_y = h
+        if bottom_y - horizon_y < 40:
+            qp.end()
+            return
+        cx = w / 2
+        a = self._accent
+        ar, ag, ab = a.red(), a.green(), a.blue()
+
+        # 縦線 (放射状) - 中央から扇形に広がる
+        n_v = 16
+        for i in range(-n_v, n_v + 1):
+            if i == 0:
+                continue
+            # 遠点 (中心)
+            x_top = cx
+            # 近点 (画面下端) — 距離 i * 80px
+            x_bot = cx + i * 80
+            alpha = int(140 * self._opacity * (1.0 - abs(i) / n_v * 0.5))
+            qp.setPen(QtGui.QPen(QtGui.QColor(ar, ag, ab, alpha), 1.0))
+            qp.drawLine(QtCore.QPointF(x_top, horizon_y),
+                        QtCore.QPointF(x_bot, bottom_y))
+
+        # 横線 (遠近) - 下から上へ等比で密度上がる
+        rows = 14
+        for i in range(rows):
+            # i=0 が画面下, i=rows-1 が水平線近く
+            t = i / (rows - 1)
+            # 遠近圧縮: 上に行くほど近接
+            y = bottom_y - (1 - t ** 2.2) * (bottom_y - horizon_y)
+            alpha = int(160 * self._opacity * (1.0 - t * 0.8))
+            qp.setPen(QtGui.QPen(QtGui.QColor(ar, ag, ab, alpha), 1.0))
+            qp.drawLine(QtCore.QPointF(0, y), QtCore.QPointF(w, y))
+
+        # 水平線 (明るく)
+        qp.setPen(QtGui.QPen(QtGui.QColor(ar, ag, ab,
+                                          int(220 * self._opacity)), 1.5))
+        qp.drawLine(QtCore.QPointF(0, horizon_y),
+                    QtCore.QPointF(w, horizon_y))
+        qp.end()
 
 
 def _fibonacci_sphere(n):
@@ -549,63 +1006,126 @@ class _MandalaOverlay(QtWidgets.QWidget):
                 qp.drawLine(QtCore.QPointF(x1, y1),
                             QtCore.QPointF(x2, y2))
 
-        # 点描画 (深度で大きさ/色)
-        for (px, py, z3) in projected:
+        # 渦巻きパーティクル (球面点に + 渦回転オフセットを加味して 銀河風)
+        # マゼンタとシアンの 2色トーンを混ぜる
+        magenta = QtGui.QColor(255, 80, 200)
+        mr, mg, mb = magenta.red(), magenta.green(), magenta.blue()
+        for idx, (px, py, z3) in enumerate(projected):
             depth_factor = (z3 + 1.0) * 0.5
             size = 1.2 + depth_factor * 2.3
-            a = int(180 * self._opacity * (0.4 + 0.6 * depth_factor))
-            # 前面ほど明色 (白寄り)、背面はアクセント色
-            r_c = int(ar + (255 - ar) * depth_factor)
-            g_c = int(ag + (255 - ag) * depth_factor)
-            b_c = int(ab + (255 - ab) * depth_factor)
+            a_alpha = int(200 * self._opacity * (0.4 + 0.6 * depth_factor))
+            # アクセント色 ⇔ マゼンタ を idx で交互ミックス → 渦の二色感
+            mix_t = (idx * 0.137) % 1.0
+            r_c = int(ar * (1 - mix_t) + mr * mix_t)
+            g_c = int(ag * (1 - mix_t) + mg * mix_t)
+            b_c = int(ab * (1 - mix_t) + mb * mix_t)
+            # 前面ほど明色寄り
+            r_c = int(r_c + (255 - r_c) * depth_factor * 0.6)
+            g_c = int(g_c + (255 - g_c) * depth_factor * 0.6)
+            b_c = int(b_c + (255 - b_c) * depth_factor * 0.6)
             qp.setPen(QtCore.Qt.NoPen)
-            qp.setBrush(QtGui.QColor(r_c, g_c, b_c, a))
+            qp.setBrush(QtGui.QColor(r_c, g_c, b_c, a_alpha))
             qp.drawEllipse(QtCore.QPointF(px, py), size, size)
 
-        # 中心の輝点 (脈動)
-        core_r = 6 + 4 * pulse
-        core_grad = QtGui.QRadialGradient(QtCore.QPointF(cx, cy),
-                                           core_r * 2)
-        core_grad.setColorAt(0.0, QtGui.QColor(255, 255, 255,
-                                                int(240 * pulse)))
-        core_grad.setColorAt(0.5, QtGui.QColor(ar, ag, ab,
-                                                int(140 * pulse)))
-        core_grad.setColorAt(1.0, QtGui.QColor(ar, ag, ab, 0))
-        qp.setPen(QtCore.Qt.NoPen)
-        qp.setBrush(core_grad)
-        qp.drawEllipse(QtCore.QPointF(cx, cy), core_r * 2, core_r * 2)
+        # 中心の輝点 (脈動 + 強い発光)
+        core_r = 10 + 6 * pulse
+        # 多層発光 (外側ハロー→内側コア)
+        for mult, alpha_base in [(4.0, 60), (2.5, 130), (1.5, 200), (1.0, 255)]:
+            rr = core_r * mult
+            grad = QtGui.QRadialGradient(QtCore.QPointF(cx, cy), rr)
+            grad.setColorAt(0.0, QtGui.QColor(255, 255, 255,
+                                               int(alpha_base * pulse)))
+            grad.setColorAt(0.4, QtGui.QColor(ar, ag, ab,
+                                               int(alpha_base * 0.6 * pulse)))
+            grad.setColorAt(1.0, QtGui.QColor(ar, ag, ab, 0))
+            qp.setPen(QtCore.Qt.NoPen)
+            qp.setBrush(grad)
+            qp.drawEllipse(QtCore.QPointF(cx, cy), rr, rr)
 
-        # ===== EQ 放射状ライン =====
+        # ===== EQ 放射状ライン (右側) =====
         if self._eq_vals:
             self._paint_eq_spokes(qp, cx, cy, R, ar, ag, ab)
 
+        # ===== EEG バンドラベル弧 (左側) =====
+        self._paint_band_arc(qp, cx, cy, R, ar, ag, ab)
+
         qp.end()
 
-    def _paint_eq_spokes(self, qp, cx, cy, R, ar, ag, ab):
-        """中心オーブから 6 楽器ラベルへ放射状ラインを描く."""
+    def _paint_band_arc(self, qp, cx, cy, R, ar, ag, ab):
+        """δ θ α β γ をオーブ左側に弧状配置. mockup4 風."""
         import math as _m
-        # 右側に扇形に配置: -50° 〜 +50° (上→下)
+        labels = [("δ", "#b07cff"), ("θ", "#5fc7ff"),
+                  ("α", "#5fffaa"), ("β", "#ffcf4d"),
+                  ("γ", "#ff7a9c")]
+        n = len(labels)
+        start_deg = 235
+        end_deg = 125
+        # オーブ + EQ ハブと十分離す
+        arc_radius = R * 1.35
+        label_radius = R * 1.55   # ピル中心位置
+
+        # 弧線 (背景)
+        arc_pen = QtGui.QPen(QtGui.QColor(ar, ag, ab,
+                              int(120 * self._opacity)), 1.2)
+        qp.setPen(arc_pen)
+        qp.setBrush(QtCore.Qt.NoBrush)
+        rect = QtCore.QRectF(cx - arc_radius, cy - arc_radius,
+                              arc_radius * 2, arc_radius * 2)
+        qp.drawArc(rect, int(-235 * 16),
+                    int(-(360 - 235 + 125) * 16))
+
+        for i, (label, col_hex) in enumerate(labels):
+            t = i / (n - 1)
+            sweep = (360 - start_deg + end_deg) % 360
+            deg = (start_deg - t * sweep) % 360
+            rad = _m.radians(deg)
+            # 弧上のドット
+            dx = cx + arc_radius * _m.cos(rad)
+            dy = cy + arc_radius * _m.sin(rad)
+            col = QtGui.QColor(col_hex)
+            qp.setBrush(col)
+            qp.setPen(QtCore.Qt.NoPen)
+            qp.drawEllipse(QtCore.QPointF(dx, dy), 4.0, 4.0)
+
+            # ピル背景 + ラベル (読みやすく大型化)
+            lx = cx + label_radius * _m.cos(rad)
+            ly = cy + label_radius * _m.sin(rad)
+            pill_w, pill_h = 50, 38
+            pill_rect = QtCore.QRectF(lx - pill_w / 2, ly - pill_h / 2,
+                                       pill_w, pill_h)
+            # 不透明な暗背景でコントラスト確保
+            qp.setBrush(QtGui.QColor(4, 4, 10, 240))
+            border_pen = QtGui.QPen(QtGui.QColor(col.red(), col.green(),
+                                     col.blue(), 255), 2.0)
+            qp.setPen(border_pen)
+            qp.drawRoundedRect(pill_rect, pill_h / 2, pill_h / 2)
+            # 文字 (大きく + ハイコントラスト)
+            font = QtGui.QFont()
+            font.setPointSize(22)
+            font.setBold(True)
+            qp.setFont(font)
+            qp.setPen(QtGui.QColor(col.red(), col.green(), col.blue(), 255))
+            qp.drawText(pill_rect, QtCore.Qt.AlignCenter, label)
+
+    def _paint_eq_spokes(self, qp, cx, cy, R, ar, ag, ab):
+        """中心オーブから 6 楽器ラベルへ放射状ライン + 六角形ラベル."""
+        import math as _m
         n = len(self.EQ_BANDS)
         start_deg = -55
         end_deg = 55
-        # ラベルの距離
-        rad_inner = R * 1.15
-        rad_outer = min(self.width(), self.height()) * 0.40
+        rad_inner = R * 1.35
+        rad_outer = min(self.width(), self.height()) * 0.45
         for i, (key, label, emoji) in enumerate(self.EQ_BANDS):
             t = i / (n - 1)
             deg = start_deg + (end_deg - start_deg) * t
             rad = _m.radians(deg)
-            # 内側点 (オーブのリング上)
             x1 = cx + rad_inner * _m.cos(rad)
             y1 = cy + rad_inner * _m.sin(rad)
-            # 外側点 (ラベル位置)
             x2 = cx + rad_outer * _m.cos(rad)
             y2 = cy + rad_outer * _m.sin(rad)
-            # 値 = -1..+1 で正規化
             v = self._eq_vals.get(key, 0.0)
             v_norm = max(-1.0, min(1.0, v / max(0.1, self._eq_gain_max)))
             intensity = abs(v_norm)
-            # 接続線: 値で太さ・透明度変化
             alpha = int(70 + 150 * intensity)
             line_w = 1.2 + intensity * 2.0
             pen = QtGui.QPen(QtGui.QColor(ar, ag, ab,
@@ -613,38 +1133,52 @@ class _MandalaOverlay(QtWidgets.QWidget):
             qp.setPen(pen)
             qp.drawLine(QtCore.QPointF(x1, y1), QtCore.QPointF(x2, y2))
 
-            # 外端の小さい点
-            dot_r = 4 + intensity * 3
-            qp.setBrush(QtGui.QColor(ar, ag, ab,
-                                     int(220 * self._opacity * 1.5)))
-            qp.setPen(QtCore.Qt.NoPen)
-            qp.drawEllipse(QtCore.QPointF(x2, y2), dot_r, dot_r)
+            # === 六角形ラベル ===
+            hex_w = 86
+            hex_h = 44
+            # ラベル中心位置 (線の終点から少し右にオフセット)
+            label_cx = x2 + (hex_w / 2 + 6) * _m.cos(rad)
+            label_cy = y2 + (hex_h / 2 + 6) * _m.sin(rad) if rad > 0 else y2
 
-            # ラベルテキスト
-            label_off_x = 14
-            text_x = x2 + label_off_x
-            text_y = y2
-            qp.save()
+            # 中心を x2 から少しずらした位置に置く
+            hcx = x2 + 14 + hex_w / 2
+            hcy = y2
+            # 六角形パス (横長 = pointy-side-vertical の標準六角)
+            # 6頂点: 左右の頂点 + 上下2点ずつ
+            hex_pts = []
+            for k in range(6):
+                ang = _m.pi / 3 * k
+                hex_pts.append(QtCore.QPointF(
+                    hcx + (hex_w / 2) * _m.cos(ang),
+                    hcy + (hex_h / 2) * _m.sin(ang)))
+            poly = QtGui.QPolygonF(hex_pts)
+            # 背景塗り (不透明寄りで読みやすく)
+            qp.setBrush(QtGui.QColor(4, 4, 10, 235))
+            border_pen = QtGui.QPen(QtGui.QColor(ar, ag, ab, 255),
+                                     1.8 + intensity * 0.8)
+            qp.setPen(border_pen)
+            qp.drawPolygon(poly)
+            # ラベルテキスト (大きく)
             font_lbl = QtGui.QFont()
             font_lbl.setPointSize(11)
             font_lbl.setBold(True)
             qp.setFont(font_lbl)
-            qp.setPen(QtGui.QColor(255, 255, 255,
-                                   int(230 * self._opacity * 1.5)))
-            qp.drawText(QtCore.QRectF(text_x, text_y - 10, 60, 14),
-                        QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter,
-                        label)
+            qp.setPen(QtGui.QColor(255, 255, 255, 255))
+            qp.drawText(
+                QtCore.QRectF(hcx - hex_w / 2, hcy - hex_h / 2 + 4,
+                              hex_w, hex_h / 2),
+                QtCore.Qt.AlignCenter, label)
+            # 値 (大きく + bright)
             font_v = QtGui.QFont("Consolas")
-            font_v.setPointSize(9)
+            font_v.setPointSize(10)
             font_v.setBold(True)
             qp.setFont(font_v)
             sign = "+" if v >= 0 else ""
-            qp.setPen(QtGui.QColor(ar, ag, ab,
-                                   int(255 * self._opacity * 1.6)))
-            qp.drawText(QtCore.QRectF(text_x, text_y + 4, 60, 12),
-                        QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter,
-                        f"{sign}{v:.1f}")
-            qp.restore()
+            qp.setPen(QtGui.QColor(ar, ag, ab, 255))
+            qp.drawText(
+                QtCore.QRectF(hcx - hex_w / 2, hcy,
+                              hex_w, hex_h / 2 - 2),
+                QtCore.Qt.AlignCenter, f"{sign}{v:.1f}")
 
 
 class _BrainWave(QtWidgets.QWidget):
@@ -1067,19 +1601,19 @@ class _EEGCurveProxy:
 
 
 class _BandSphere(QtWidgets.QWidget):
-    """1バンドの光る球. 値が大きいほど明るく大きく光る (mockup 風)."""
+    """mockup 風の neon リングゲージ. 外側カラーリング + 中央数値 + 下ラベル."""
 
     def __init__(self, label, color_hex, parent=None):
         super().__init__(parent)
         self.label = label
         self._color = QtGui.QColor(color_hex)
-        self._value = 0.0   # 0..1 (光量・サイズの強さ)
+        self._value = 0.0
         self._raw = 0.0
         self._phase = 0.0
-        self.setMinimumSize(96, 110)
+        self.setMinimumSize(110, 130)
         self._timer = QtCore.QTimer(self)
         self._timer.timeout.connect(self._tick)
-        self._timer.start(50)
+        self._timer.start(60)
 
     def _tick(self):
         import math as _m
@@ -1100,59 +1634,90 @@ class _BandSphere(QtWidgets.QWidget):
         w = self.width()
         h = self.height()
         cx = w / 2
-        cy = h * 0.46
-        # 値で球サイズ脈動
-        breathe = 1.0 + 0.08 * _m.sin(self._phase)
-        r = min(w, h) * (0.30 + 0.10 * self._value) * breathe
+        cy = h * 0.44
+        # 半径
+        radius = min(w * 0.42, h * 0.36)
+        breathe = 1.0 + 0.05 * _m.sin(self._phase)
+        radius *= breathe
 
         col = self._color
-        # 外側グロー (4段)
-        for mult, alpha_mul in [(2.6, 0.18), (1.8, 0.40),
-                                  (1.3, 0.75), (1.0, 1.0)]:
-            rr = r * mult
-            grad = QtGui.QRadialGradient(QtCore.QPointF(cx, cy), rr)
-            alpha = int(180 * alpha_mul * (0.4 + 0.6 * self._value))
-            c0 = QtGui.QColor(col.red(), col.green(), col.blue(), alpha)
-            c1 = QtGui.QColor(col.red(), col.green(), col.blue(), 0)
-            grad.setColorAt(0.0, c0)
-            grad.setColorAt(1.0, c1)
+        cr, cg, cb = col.red(), col.green(), col.blue()
+
+        # 外側ハロー (mountain shadow 風: 雲のような後光)
+        for mult, alpha in [(2.4, 18), (1.7, 35), (1.25, 70)]:
+            grad = QtGui.QRadialGradient(QtCore.QPointF(cx, cy), radius * mult)
+            mul_alpha = int(alpha * (0.4 + 0.6 * self._value))
+            grad.setColorAt(0.0, QtGui.QColor(cr, cg, cb, mul_alpha))
+            grad.setColorAt(1.0, QtGui.QColor(cr, cg, cb, 0))
             qp.setPen(QtCore.Qt.NoPen)
             qp.setBrush(grad)
-            qp.drawEllipse(QtCore.QPointF(cx, cy), rr, rr)
+            qp.drawEllipse(QtCore.QPointF(cx, cy),
+                           radius * mult, radius * mult)
 
-        # 内側球本体 (光沢付き)
-        body = QtGui.QRadialGradient(
-            QtCore.QPointF(cx - r * 0.25, cy - r * 0.25), r * 1.3)
-        bright = QtGui.QColor(col)
-        bright.setHsv(col.hue(),
-                      max(20, col.saturation() - 80),
-                      min(255, col.value() + 60))
-        body.setColorAt(0.0, QtGui.QColor(255, 255, 255, 200))
-        body.setColorAt(0.25, bright)
-        dark = QtGui.QColor(col)
-        dark.setHsv(col.hue(), col.saturation(),
-                    max(40, col.value() - 80))
-        body.setColorAt(1.0, dark)
+        # 値による不規則 mountain (4ch シミュ): リング外側で軽い波形を描く
+        n_pts = 36
+        bg_path = QtGui.QPainterPath()
+        for i in range(n_pts + 1):
+            ang = 2 * _m.pi * i / n_pts - _m.pi / 2
+            jitter = 0.05 + 0.10 * self._value * (
+                0.5 + 0.5 * _m.sin(self._phase * 1.5 + i * 0.7))
+            r_pt = radius * (1.15 + jitter)
+            x = cx + r_pt * _m.cos(ang)
+            y = cy + r_pt * _m.sin(ang)
+            if i == 0:
+                bg_path.moveTo(x, y)
+            else:
+                bg_path.lineTo(x, y)
+        bg_pen = QtGui.QPen(QtGui.QColor(cr, cg, cb,
+                                          int(160 * (0.3 + 0.7 * self._value))),
+                             1.2)
+        qp.setPen(bg_pen)
+        qp.setBrush(QtCore.Qt.NoBrush)
+        qp.drawPath(bg_path)
+
+        # メインリング: track (暗) + fill (アクセント)
+        ring_thickness = 6
+        track_pen = QtGui.QPen(QtGui.QColor(cr, cg, cb, 50),
+                                ring_thickness)
+        track_pen.setCapStyle(QtCore.Qt.RoundCap)
+        qp.setPen(track_pen)
+        qp.setBrush(QtCore.Qt.NoBrush)
+        rect = QtCore.QRectF(cx - radius, cy - radius,
+                             radius * 2, radius * 2)
+        qp.drawArc(rect, 90 * 16, 360 * 16)
+        # fill arc
+        fill_pen = QtGui.QPen(QtGui.QColor(cr, cg, cb, 240),
+                               ring_thickness)
+        fill_pen.setCapStyle(QtCore.Qt.RoundCap)
+        qp.setPen(fill_pen)
+        span = int(-360 * 16 * self._value)
+        qp.drawArc(rect, 90 * 16, span)
+
+        # 内側 panel (暗いガラス)
+        inner_r = radius - ring_thickness - 4
+        inner_grad = QtGui.QRadialGradient(QtCore.QPointF(cx, cy), inner_r)
+        inner_grad.setColorAt(0.0, QtGui.QColor(15, 15, 22, 220))
+        inner_grad.setColorAt(1.0, QtGui.QColor(5, 5, 8, 230))
+        qp.setBrush(inner_grad)
         qp.setPen(QtCore.Qt.NoPen)
-        qp.setBrush(body)
-        qp.drawEllipse(QtCore.QPointF(cx, cy), r, r)
+        qp.drawEllipse(QtCore.QPointF(cx, cy), inner_r, inner_r)
 
-        # 値テキスト (球内)
+        # 値テキスト
         val_font = QtGui.QFont("Consolas")
         val_font.setPointSize(11)
         val_font.setBold(True)
         qp.setFont(val_font)
         qp.setPen(QtGui.QColor(255, 255, 255, 240))
-        qp.drawText(QtCore.QRectF(cx - r, cy - 10, r * 2, 20),
+        qp.drawText(QtCore.QRectF(cx - radius, cy - 10, radius * 2, 20),
                     QtCore.Qt.AlignCenter, f"{self._raw:.2f}")
 
-        # ラベル (球下)
+        # ラベル
         lbl_font = QtGui.QFont()
-        lbl_font.setPointSize(14)
+        lbl_font.setPointSize(15)
         lbl_font.setBold(True)
         qp.setFont(lbl_font)
         qp.setPen(col)
-        qp.drawText(QtCore.QRectF(0, h - 24, w, 20),
+        qp.drawText(QtCore.QRectF(0, h - 22, w, 20),
                     QtCore.Qt.AlignCenter, self.label)
         qp.end()
 
@@ -1239,7 +1804,25 @@ class _InstrumentCircle(QtWidgets.QWidget):
         self._gain_max = 4.0
         self._accent = QtGui.QColor("#1abc9c")
         self._text_dim = QtGui.QColor("#8a8a8a")
-        self.setMinimumSize(130, 175)
+        self._phase = 0.0
+        self.setMinimumSize(150, 200)
+        # 楽器テクスチャ画像 (assets/instruments/{key}.png)
+        self._texture = None
+        tex_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "assets", "instruments", f"{key}.png")
+        if os.path.exists(tex_path):
+            img = QtGui.QImage(tex_path)
+            if not img.isNull():
+                self._texture = img
+        self._timer = QtCore.QTimer(self)
+        self._timer.timeout.connect(self._tick)
+        self._timer.start(60)
+
+    def _tick(self):
+        import math as _m
+        self._phase = (self._phase + 0.08) % (2 * _m.pi)
+        self.update()
 
     def set_accent(self, color_hex):
         self._accent = QtGui.QColor(color_hex)
@@ -1264,9 +1847,15 @@ class _InstrumentCircle(QtWidgets.QWidget):
         # 強度 0..1 (絶対値 / gain_max)
         intensity = min(1.0, abs(self._value_db) / self._gain_max)
 
+        # 値で脈動 (mockup 風)
+        import math as _m
+        breathe = 1.0 + 0.04 * _m.sin(self._phase) * (
+            0.5 + 0.5 * intensity)
+        r *= breathe
+
         # 外側グロー (4段、強め)
-        for mult, alpha in [(2.8, 18), (2.0, 38), (1.55, 70),
-                              (1.20, 140)]:
+        for mult, alpha in [(3.2, 14), (2.3, 28), (1.7, 55),
+                              (1.25, 130)]:
             col = QtGui.QColor(self._accent)
             col.setAlpha(int(alpha * (0.5 + 0.5 * intensity)))
             g = QtGui.QRadialGradient(QtCore.QPointF(cx, cy), r * mult)
@@ -1278,25 +1867,54 @@ class _InstrumentCircle(QtWidgets.QWidget):
             qp.setBrush(g)
             qp.drawEllipse(QtCore.QPointF(cx, cy), r * mult, r * mult)
 
-        # リング (太め + 内側影付き)
-        ring_pen = QtGui.QPen(self._accent, 3.0 + 2.0 * intensity)
+        # 太いネオンリング
+        ring_pen = QtGui.QPen(self._accent, 3.5 + 2.5 * intensity)
         qp.setPen(ring_pen)
-        qp.setBrush(QtGui.QColor(10, 10, 14, 200))
+        qp.setBrush(QtGui.QColor(6, 6, 10, 220))
         qp.drawEllipse(QtCore.QPointF(cx, cy), r, r)
-        # 内側のハイライトリング
+        # 内側 2重リング
         inner_pen = QtGui.QPen(
-            QtGui.QColor(255, 255, 255, int(60 + 80 * intensity)), 1.0)
+            QtGui.QColor(255, 255, 255, int(50 + 100 * intensity)), 1.2)
         qp.setPen(inner_pen)
         qp.setBrush(QtCore.Qt.NoBrush)
-        qp.drawEllipse(QtCore.QPointF(cx, cy), r - 4, r - 4)
+        qp.drawEllipse(QtCore.QPointF(cx, cy), r - 5, r - 5)
+        # 内側さらに細い
+        inner2_pen = QtGui.QPen(
+            QtGui.QColor(self._accent.red(), self._accent.green(),
+                          self._accent.blue(),
+                          int(100 + 60 * intensity)), 0.8)
+        qp.setPen(inner2_pen)
+        qp.drawEllipse(QtCore.QPointF(cx, cy), r - 10, r - 10)
 
-        # 絵文字 (中央)
-        emoji_font = QtGui.QFont()
-        emoji_font.setPointSize(int(r * 0.7))
-        qp.setFont(emoji_font)
-        qp.setPen(QtGui.QColor(255, 255, 255, 240))
-        qp.drawText(QtCore.QRectF(cx - r, cy - r, r * 2, r * 2),
-                    QtCore.Qt.AlignCenter, self.emoji)
+        # 中央: テクスチャ画像があれば使う、なければ絵文字
+        if self._texture is not None and not self._texture.isNull():
+            # 円内 (半径 r - 10 程度) にアスペクト維持でフィット
+            inner_r = r - 12
+            qp.save()
+            # 円形クリップ
+            clip = QtGui.QPainterPath()
+            clip.addEllipse(QtCore.QPointF(cx, cy), inner_r, inner_r)
+            qp.setClipPath(clip)
+            img = self._texture
+            src_ratio = img.width() / max(1, img.height())
+            box = inner_r * 2
+            if src_ratio >= 1:
+                dw = box
+                dh = box / src_ratio
+            else:
+                dh = box
+                dw = box * src_ratio
+            qp.drawImage(
+                QtCore.QRectF(cx - dw / 2, cy - dh / 2, dw, dh),
+                img)
+            qp.restore()
+        else:
+            emoji_font = QtGui.QFont()
+            emoji_font.setPointSize(int(r * 0.7))
+            qp.setFont(emoji_font)
+            qp.setPen(QtGui.QColor(255, 255, 255, 240))
+            qp.drawText(QtCore.QRectF(cx - r, cy - r, r * 2, r * 2),
+                        QtCore.Qt.AlignCenter, self.emoji)
 
         # dB 値 (円の下)
         value_font = QtGui.QFont("Consolas")
@@ -1544,6 +2162,10 @@ class MainWindow(QtWidgets.QMainWindow):
         eeg_w, self.eeg_curves = self._build_eeg_plots()
         self.cards["eeg"] = Card("Raw EEG  |  bandpass 1–40 Hz", eeg_w, "eeg",
                                  theme=self.theme)
+        self.cards["eeg"].set_hover_info(
+            "RAW EEG  ·  4ch",
+            "TP9 / AF7 / AF8 / TP10 の生波形 (1–40 Hz バンドパス).\n"
+            "粒子は最新値の位置に出生して左に流れる. 視覚化で値の急変を捉えやすい.")
         self.card_positions["eeg"] = (0, 0)
 
         (spec_w, self.spec_img, self.spec_data, self.spec_ch_selector,
@@ -1551,16 +2173,31 @@ class MainWindow(QtWidgets.QMainWindow):
         self._spec_mode = 0  # STFT のみ
         self.cards["spec"] = Card("Spectrogram  |  rolling STFT (log power)",
                                   spec_w, "spec", theme=self.theme)
+        self.cards["spec"].set_hover_info(
+            "SPECTROGRAM  ·  STFT",
+            "選択チャンネルのローリング STFT (Welch 法).\n"
+            "縦軸 = 周波数 (0–40 Hz), 横軸 = 時間, 色 = log power.\n"
+            "α/β/γ 帯のパワー変動が時系列で見える.")
         self.card_positions["spec"] = (1, 0)
 
         hr_w, self.hr_curves, self.hr_bpm_label, self.hr_status = self._build_hr_panel()
         self.cards["hr"] = Card("Heart Rate & fNIRS (Athena 光学センサー)",
                                 hr_w, "hr", theme=self.theme)
+        self.cards["hr"].set_hover_info(
+            "HEART RATE  ·  fNIRS",
+            "Muse S Athena の PPG / 光学センサー (4ch).\n"
+            "BPM は OSC ストリーム or PPG ピーク検出から取得.\n"
+            "心拍は HR ヒステリシスで水中シーン切替にも使う.")
         self.card_positions["hr"] = (2, 0)
 
         band_w, self.band_bars = self._build_band_plot()
         self.cards["band"] = Card("Band Power (δ, θ, α, β, γ)", band_w, "band",
                                   theme=self.theme)
+        self.cards["band"].set_hover_info(
+            "BAND POWER  ·  δθαβγ",
+            "5 帯域 (Delta / Theta / Alpha / Beta / Gamma) のネオンリングゲージ.\n"
+            "値は 4ch 平均の log power を 0..1 に正規化.\n"
+            "α/β 比 から Engagement や Arousal も算出.")
         self.card_positions["band"] = (0, 1)
 
         q_w, self.q_dots, self.q_texts, self.q_descs, \
@@ -1568,6 +2205,11 @@ class MainWindow(QtWidgets.QMainWindow):
             self._build_quality_panel()
         self.cards["quality"] = Card("Signal Quality (電極接触状態)", q_w, "quality",
                                      theme=self.theme)
+        self.cards["quality"].set_hover_info(
+            "SIGNAL QUALITY  ·  Electrode Contact",
+            "Muse horseshoe 値: 1 = Good / 2 = OK / 4 = Bad.\n"
+            "Bad のチャンネルは感情推定から自動除外される.\n"
+            "ドットの脈動速度は接触状態に対応 (Good = ゆっくり).")
         self.card_positions["quality"] = (1, 1)
 
         (e_w, self.russell_scatter, self.russell_curve,
@@ -1575,12 +2217,22 @@ class MainWindow(QtWidgets.QMainWindow):
          self.emo_extras) = self._build_emotion_panel()
         self.cards["emotion"] = Card("Emotion — Russell's Circumplex Model (1980)",
                                      e_w, "emotion", theme=self.theme)
+        self.cards["emotion"].set_hover_info(
+            "EMOTION  ·  Russell's Circumplex",
+            "Arousal × Valence の 2 次元感情マップ (Russell, 1980).\n"
+            "白いドット = 現在状態 / 軌跡 = 過去履歴.\n"
+            "4 象限: Excited / Stressed / Sad / Calm.")
         self.card_positions["emotion"] = (2, 1)
 
         eq_w = self._build_eq_card()
         self.cards["eq"] = Card("🎛  Adaptive EQ  |  VB-CABLE → Output",
                                 eq_w, "eq", theme=self.theme,
                                 accent_border=True)
+        self.cards["eq"].set_hover_info(
+            "ADAPTIVE EQ  ·  6-band + Reverb",
+            "VB-CABLE → pedalboard → 出力デバイスの信号経路.\n"
+            "Drums / Bass / Mid / Vocals / High / Air の各帯域 + Reverb.\n"
+            "Auto モードで感情から自動制御, Manual で直接操作.")
         # EQ は 3行をまたぐ右端カラム
         self.card_positions["eq"] = (0, 2, 3, 1)  # row, col, rowspan, colspan
 
@@ -1613,6 +2265,13 @@ class MainWindow(QtWidgets.QMainWindow):
         sh_lay = QtWidgets.QVBoxLayout(self._watch_sea_holder)
         sh_lay.setContentsMargins(0, 0, 0, 0)
         wp_lay.addWidget(self._watch_sea_holder)
+        # Watch 装飾レイヤ (sea の上, mandala/HUD の下)
+        self._watch_tron = _TronGrid(self.watch_page)
+        self._watch_tron.set_accent(self.theme.accent)
+        self._watch_tron.setGeometry(self.watch_page.rect())
+        self._watch_matrix = _MatrixRain(self.watch_page)
+        self._watch_matrix.set_accent(self.theme.accent)
+        self._watch_matrix.setGeometry(self.watch_page.rect())
         # 神聖幾何学オーバーレイ (Sea の上, HUD の下)
         self._watch_mandala = _MandalaOverlay(self.watch_page)
         self._watch_mandala.set_accent(self.theme.accent)
@@ -1621,6 +2280,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._watch_hud = self._build_watch_hud()
         self._watch_hud.setParent(self.watch_page)
         self._watch_hud.setGeometry(self.watch_page.rect())
+        # スタッキング順: tron (一番下) → matrix → mandala → hud
+        self._watch_tron.lower()
+        self._watch_matrix.raise_()
         self._watch_mandala.raise_()
         self._watch_hud.raise_()
         self.watch_page.installEventFilter(self)
@@ -1704,19 +2366,41 @@ class MainWindow(QtWidgets.QMainWindow):
         from audio_engine import list_output_devices, pick_output_device
         w = QtWidgets.QFrame()
         w.setObjectName("header")
-        w.setStyleSheet("""
-            QFrame#header {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #1a1a1c, stop:1 #1f1f23);
-                border: 1px solid #2a2a2c;
-                border-radius: 12px;
-            }
-            QLabel { border: none; }
-        """)
+        self._header_frame = w
+        # 回路パターン画像があれば背景に使う + アクセント色の neon border
+        circuit_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "assets", "bg", "bg_circuit.png").replace("\\", "/")
+        t = self.theme
+        ar, ag, ab = (QtGui.QColor(t.accent).red(),
+                       QtGui.QColor(t.accent).green(),
+                       QtGui.QColor(t.accent).blue())
+        if os.path.exists(circuit_path):
+            w.setStyleSheet(f"""
+                QFrame#header {{
+                    background-image: url("{circuit_path}");
+                    background-position: center;
+                    background-repeat: no-repeat;
+                    border: 2px solid rgba({ar}, {ag}, {ab}, 200);
+                    border-radius: 12px;
+                }}
+                QLabel {{ border: none; background: transparent; }}
+            """)
+        else:
+            w.setStyleSheet(f"""
+                QFrame#header {{
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                        stop:0 #1a1a1c, stop:1 #1f1f23);
+                    border: 2px solid rgba({ar}, {ag}, {ab}, 200);
+                    border-radius: 12px;
+                }}
+                QLabel {{ border: none; }}
+            """)
+        # ネオングロー (アクセント色)
         shadow = QtWidgets.QGraphicsDropShadowEffect(w)
-        shadow.setBlurRadius(16)
-        shadow.setOffset(0, 2)
-        shadow.setColor(QtGui.QColor(0, 0, 0, 100))
+        shadow.setBlurRadius(30)
+        shadow.setOffset(0, 0)
+        shadow.setColor(QtGui.QColor(ar, ag, ab, 180))
         w.setGraphicsEffect(shadow)
 
         # 縦 2段
@@ -1737,11 +2421,18 @@ class MainWindow(QtWidgets.QMainWindow):
         title_box.setContentsMargins(0, 0, 0, 0)
         main_title = QtWidgets.QLabel("EEG Adaptive EQ")
         main_title.setStyleSheet(
-            "font-size: 14px; font-weight: 600; color: #f0f0f0; "
-            "letter-spacing: 0.5px;")
+            f"font-size: 15px; font-weight: 700; color: {self.theme.accent}; "
+            "letter-spacing: 1px;")
+        # タイトルにグロー
+        title_glow = QtWidgets.QGraphicsDropShadowEffect()
+        title_glow.setBlurRadius(18)
+        title_glow.setOffset(0, 0)
+        title_glow.setColor(QtGui.QColor(ar, ag, ab, 220))
+        main_title.setGraphicsEffect(title_glow)
+        self._header_title_glow = title_glow
         sub = QtWidgets.QLabel("Muse S Athena  ·  Mind Monitor")
         sub.setStyleSheet(
-            "font-size: 9px; color: #6a6a6a; letter-spacing: 0.3px;")
+            "font-size: 9px; color: #8a8a8a; letter-spacing: 0.3px;")
         title_box.addWidget(main_title)
         title_box.addWidget(sub)
         row1.addLayout(title_box)
@@ -1782,6 +2473,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self.rec_btn.clicked.connect(self._toggle_recording)
         self.rec_btn.setToolTip("クリックで録画開始 / 停止")
         row1.addWidget(self.rec_btn)
+
+        # オーディオレベルメータ
+        self.audio_level_meter = _StatusMeter()
+        self.audio_level_meter.setFixedWidth(100)
+        self.audio_level_meter.setFixedHeight(20)
+        self.audio_level_meter.set_accent(self.theme.accent)
+        self.audio_level_meter.setToolTip("Audio output RMS level")
+        row1.addWidget(self.audio_level_meter)
 
         # ストリーミングインジケータ
         self.status_label = QtWidgets.QLabel("● Connecting...")
@@ -1884,6 +2583,40 @@ class MainWindow(QtWidgets.QMainWindow):
             "font-size: 10px; color: #8a8a8a; letter-spacing: 0.5px;"
             "margin-right: 2px;")
         return lbl
+
+    def _restyle_header(self, w):
+        """テーマ変更時にヘッダのネオン border / glow を accent 色に追従."""
+        t = self.theme
+        ar2 = QtGui.QColor(t.accent).red()
+        ag2 = QtGui.QColor(t.accent).green()
+        ab2 = QtGui.QColor(t.accent).blue()
+        circuit_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "assets", "bg", "bg_circuit.png").replace("\\", "/")
+        if os.path.exists(circuit_path):
+            w.setStyleSheet(f"""
+                QFrame#header {{
+                    background-image: url("{circuit_path}");
+                    background-position: center;
+                    background-repeat: no-repeat;
+                    border: 2px solid rgba({ar2}, {ag2}, {ab2}, 200);
+                    border-radius: 12px;
+                }}
+                QLabel {{ border: none; background: transparent; }}
+            """)
+        else:
+            w.setStyleSheet(f"""
+                QFrame#header {{
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                        stop:0 #1a1a1c, stop:1 #1f1f23);
+                    border: 2px solid rgba({ar2}, {ag2}, {ab2}, 200);
+                    border-radius: 12px;
+                }}
+                QLabel {{ border: none; }}
+            """)
+        eff = w.graphicsEffect()
+        if isinstance(eff, QtWidgets.QGraphicsDropShadowEffect):
+            eff.setColor(QtGui.QColor(ar2, ag2, ab2, 180))
 
     def _build_eeg_plots(self):
         """Raw EEG をパーティクル付き波形で表示 (mockup 風)."""
@@ -2463,11 +3196,16 @@ class MainWindow(QtWidgets.QMainWindow):
         self._update_eq_view_btn_style()
 
     # ---- Sea ビュー駆動 (Mixer / Sea どちらでも毎フレーム呼ぶ) ----
-    def _update_sea_state(self, rus, eng, quality, hr_bpm_osc, last_ppg, now):
+    def _update_sea_state(self, rus, eng, quality, hr_bpm_osc, last_ppg, now,
+                          force=False):
         if not HAS_SEA or self.sea_widget is None:
             return
         # Sea が非表示のときは負荷軽減のため skip
-        if self._eq_view != "sea":
+        # Sea が見えてる時だけ更新: EQ Sea タブ表示中 OR Watch モード時
+        in_watch = getattr(self, "_mode", "studio") == "watch"
+        in_eq_sea = (self._eq_view == "sea"
+                     and getattr(self, "_mode", "studio") == "studio")
+        if not (in_watch or in_eq_sea or force):
             return
         # HSI: quality (1=Good, 2=OK, 4=Bad) を 0..1 に
         if quality:
@@ -2554,9 +3292,11 @@ class MainWindow(QtWidgets.QMainWindow):
             }}
             QLabel {{ color: {t.text_main}; }}
             QToolTip {{
-                background-color: {t.bg_panel}; color: {t.text_main};
-                border: 1px solid {t.border_hover}; border-radius: 4px;
-                padding: 5px 8px; font-size: 11px;
+                background-color: rgba(8, 8, 14, 235);
+                color: {t.text_main};
+                border: 1px solid {t.accent};
+                border-radius: 6px;
+                padding: 8px 12px; font-size: 11px;
             }}
             QComboBox {{
                 background-color: {t.bg_panel}; color: {t.text_main};
@@ -2598,6 +3338,19 @@ class MainWindow(QtWidgets.QMainWindow):
             self._restyle_watch_hud(self._watch_hud)
         if hasattr(self, "_watch_mandala"):
             self._watch_mandala.set_accent(self.theme.accent)
+        if hasattr(self, "_watch_tron"):
+            self._watch_tron.set_accent(self.theme.accent)
+        if hasattr(self, "_watch_matrix"):
+            self._watch_matrix.set_accent(self.theme.accent)
+        # ヘッダ neon border + title glow を accent 色に
+        if hasattr(self, "_header_frame"):
+            self._restyle_header(self._header_frame)
+        if hasattr(self, "_header_title_glow"):
+            arT, agT, abT = (QtGui.QColor(self.theme.accent).red(),
+                              QtGui.QColor(self.theme.accent).green(),
+                              QtGui.QColor(self.theme.accent).blue())
+            self._header_title_glow.setColor(
+                QtGui.QColor(arT, agT, abT, 220))
         if hasattr(self, "listen_page"):
             self._restyle_listen_page(self.listen_page)
         if hasattr(self, "eq_bank"):
@@ -2650,23 +3403,47 @@ class MainWindow(QtWidgets.QMainWindow):
                 )
                 btn.setGraphicsEffect(None)
 
+    # モードタブの並び順 (スライド方向の判定に使う)
+    _MODE_ORDER = ("studio", "listen", "watch")
+
     def _animate_mode_fade(self, widget):
-        """新しいページに opacity フェードイン."""
+        """新しいページにスライドイン + 軽い opacity フェード."""
         try:
+            # 現モード vs 前モードでスライド方向を決める
+            cur_idx = self._MODE_ORDER.index(getattr(self, "_mode", "studio"))
+            prev_idx = getattr(self, "_prev_mode_idx", cur_idx)
+            direction = 1 if cur_idx > prev_idx else -1
+            self._prev_mode_idx = cur_idx
+
+            # ウィジェット位置を一時的にオフセット → 0 へ戻す
+            geom = widget.geometry()
+            offset = 60 * direction
+            widget.setGeometry(geom.x() + offset, geom.y(),
+                                geom.width(), geom.height())
+            pos_anim = QtCore.QPropertyAnimation(widget, b"geometry", widget)
+            pos_anim.setDuration(260)
+            pos_anim.setStartValue(QtCore.QRect(
+                geom.x() + offset, geom.y(), geom.width(), geom.height()))
+            pos_anim.setEndValue(geom)
+            pos_anim.setEasingCurve(QtCore.QEasingCurve.OutCubic)
+            pos_anim.start(QtCore.QAbstractAnimation.DeleteWhenStopped)
+            self._mode_pos_anim = pos_anim
+
+            # 同時に opacity フェード
             eff = QtWidgets.QGraphicsOpacityEffect(widget)
             widget.setGraphicsEffect(eff)
             eff.setOpacity(0.0)
-            anim = QtCore.QPropertyAnimation(eff, b"opacity", widget)
-            anim.setDuration(220)
-            anim.setStartValue(0.0)
-            anim.setEndValue(1.0)
-            anim.setEasingCurve(QtCore.QEasingCurve.OutCubic)
+            op_anim = QtCore.QPropertyAnimation(eff, b"opacity", widget)
+            op_anim.setDuration(240)
+            op_anim.setStartValue(0.0)
+            op_anim.setEndValue(1.0)
+            op_anim.setEasingCurve(QtCore.QEasingCurve.OutCubic)
 
             def _cleanup():
                 widget.setGraphicsEffect(None)
-            anim.finished.connect(_cleanup)
-            anim.start(QtCore.QAbstractAnimation.DeleteWhenStopped)
-            self._mode_anim = anim
+            op_anim.finished.connect(_cleanup)
+            op_anim.start(QtCore.QAbstractAnimation.DeleteWhenStopped)
+            self._mode_op_anim = op_anim
         except Exception:
             pass
 
@@ -2736,9 +3513,19 @@ class MainWindow(QtWidgets.QMainWindow):
             if obj is self.centralWidget():
                 self._scanline.setGeometry(obj.rect())
             if hasattr(self, "watch_page") and obj is self.watch_page:
-                self._watch_hud.setGeometry(self.watch_page.rect())
+                r = self.watch_page.rect()
+                for w in (getattr(self, "_watch_tron", None),
+                          getattr(self, "_watch_matrix", None),
+                          getattr(self, "_watch_mandala", None),
+                          getattr(self, "_watch_hud", None)):
+                    if w is not None:
+                        w.setGeometry(r)
+                # 再度 stacking
+                if hasattr(self, "_watch_tron"):
+                    self._watch_tron.lower()
+                if hasattr(self, "_watch_matrix"):
+                    self._watch_matrix.raise_()
                 if hasattr(self, "_watch_mandala"):
-                    self._watch_mandala.setGeometry(self.watch_page.rect())
                     self._watch_mandala.raise_()
                 self._watch_hud.raise_()
         return super().eventFilter(obj, event)
@@ -3004,10 +3791,23 @@ class MainWindow(QtWidgets.QMainWindow):
         nlay.addWidget(_row("VAL", self._hud_val_bar, self._hud_val_val))
         nlay.addWidget(_row("ENG", self._hud_eng_bar, self._hud_eng_val))
 
-        # HR は別行 (バー無し、大きく)
-        self._hud_hr = QtWidgets.QLabel("♥   ---  BPM")
-        self._hud_hr.setObjectName("hud_hr")
-        nlay.addWidget(self._hud_hr)
+        # HR — 大型表示 (mockup 風: BPM 巨大数字 + 小さい "BPM" 単位)
+        hr_row = QtWidgets.QHBoxLayout()
+        hr_row.setContentsMargins(0, 4, 0, 0)
+        hr_row.setSpacing(4)
+        hr_icon = QtWidgets.QLabel("♥")
+        hr_icon.setObjectName("hud_hr_icon")
+        hr_row.addWidget(hr_icon)
+        self._hud_hr_big = QtWidgets.QLabel("---")
+        self._hud_hr_big.setObjectName("hud_hr_big")
+        hr_row.addWidget(self._hud_hr_big)
+        hr_unit = QtWidgets.QLabel("BPM")
+        hr_unit.setObjectName("hud_hr_unit")
+        hr_row.addWidget(hr_unit, alignment=QtCore.Qt.AlignBottom)
+        hr_row.addStretch()
+        nlay.addLayout(hr_row)
+        # 互換用: 旧 _hud_hr ラベルも作って動的色変化を維持
+        self._hud_hr = self._hud_hr_big   # 同じ参照
 
         # 右下: EQ STATE
         eqstate = QtWidgets.QFrame()
@@ -3030,21 +3830,39 @@ class MainWindow(QtWidgets.QMainWindow):
             self._hud_eq[k] = lbl
             elay.addWidget(lbl)
 
-        # === 上部中央: シーンラベル + REC バッジ + 品質ドット ===
+        # === 上部中央: ステータスバー強化 ===
+        # [REC] [▸ STATUS: CALM] [●●●○○ 強度ドット] [▮▮▮▮ 音声メータ] [品質ドット 4ch]
         top_center = QtWidgets.QFrame()
         top_center.setObjectName("hud")
         tc_lay = QtWidgets.QHBoxLayout(top_center)
-        tc_lay.setContentsMargins(16, 8, 16, 8)
-        tc_lay.setSpacing(14)
+        tc_lay.setContentsMargins(16, 6, 16, 6)
+        tc_lay.setSpacing(12)
         # REC バッジ
         self._hud_rec_badge = QtWidgets.QLabel("● REC")
         self._hud_rec_badge.setObjectName("hud_rec")
         self._hud_rec_badge.setVisible(False)
         tc_lay.addWidget(self._hud_rec_badge)
+        # 開きブラケット
+        self._hud_scene_left = QtWidgets.QLabel("[")
+        self._hud_scene_left.setObjectName("hud_scene_b")
+        tc_lay.addWidget(self._hud_scene_left)
         # シーンラベル
-        self._hud_scene_lbl = QtWidgets.QLabel("▸ CALM")
+        self._hud_scene_lbl = QtWidgets.QLabel("STATUS: CALM")
         self._hud_scene_lbl.setObjectName("hud_scene")
         tc_lay.addWidget(self._hud_scene_lbl)
+        # 強度ドット (5個固定の○/●)
+        self._hud_scene_dots = QtWidgets.QLabel("●●○○○")
+        self._hud_scene_dots.setObjectName("hud_scene_dots")
+        tc_lay.addWidget(self._hud_scene_dots)
+        # オーディオ風メータ (バー化、Arousal で長さ変動)
+        self._hud_audio_meter = _StatusMeter()
+        self._hud_audio_meter.setFixedWidth(120)
+        self._hud_audio_meter.setFixedHeight(16)
+        tc_lay.addWidget(self._hud_audio_meter)
+        # 閉じブラケット
+        self._hud_scene_right = QtWidgets.QLabel("]")
+        self._hud_scene_right.setObjectName("hud_scene_b")
+        tc_lay.addWidget(self._hud_scene_right)
         # 品質ドット (4ch)
         self._hud_q_dots = []
         for _ in range(4):
@@ -3096,11 +3914,12 @@ class MainWindow(QtWidgets.QMainWindow):
             col = QtGui.QColor(int(r * intensity + 30 * (1 - intensity)),
                                int(g * intensity + 30 * (1 - intensity)),
                                int(b * intensity + 30 * (1 - intensity)))
-            self._hud_hr.setStyleSheet(
+            self._hud_hr_big.setStyleSheet(
                 f"color: {col.name()}; "
                 "font-family: 'Consolas', 'JetBrains Mono', monospace; "
-                "font-size: 18px; font-weight: bold; "
-                "letter-spacing: 1px; background: transparent;")
+                "font-size: 30px; font-weight: bold; "
+                "letter-spacing: 1px; background: transparent; "
+                "padding-left: 4px;")
 
     def _restyle_watch_hud(self, w):
         t = self.theme
@@ -3121,9 +3940,25 @@ class MainWindow(QtWidgets.QMainWindow):
             "font-family: 'Consolas', 'JetBrains Mono', monospace; "
             "font-size: 18px; font-weight: bold; "
             "letter-spacing: 1px; background: transparent; }"
-            f"QLabel#hud_scene {{ color: {t.accent}; font-size: 16px; "
-            "font-weight: bold; letter-spacing: 4px; "
+            f"QLabel#hud_hr_icon {{ color: {t.accent}; "
+            "font-size: 22px; background: transparent; }"
+            f"QLabel#hud_hr_big {{ color: {t.accent}; "
+            "font-family: 'Consolas', 'JetBrains Mono', monospace; "
+            "font-size: 30px; font-weight: bold; "
+            "letter-spacing: 1px; background: transparent; "
+            "padding-left: 4px; }"
+            f"QLabel#hud_hr_unit {{ color: {t.text_dim}; "
+            "font-family: 'Consolas', monospace; "
+            "font-size: 11px; letter-spacing: 1.5px; "
+            "background: transparent; padding-bottom: 4px; }"
+            f"QLabel#hud_scene {{ color: {t.accent}; font-size: 14px; "
+            "font-weight: bold; letter-spacing: 2.5px; "
+            "background: transparent; "
+            "font-family: 'Consolas', 'JetBrains Mono', monospace; }"
+            f"QLabel#hud_scene_b {{ color: {t.text_dim}; font-size: 16px; "
             "background: transparent; }"
+            f"QLabel#hud_scene_dots {{ color: {t.accent}; font-size: 12px; "
+            "letter-spacing: 2px; background: transparent; }"
             "QLabel#hud_rec { color: #e74c3c; font-size: 12px; "
             "font-weight: bold; letter-spacing: 1.5px; "
             "background: transparent; }"
@@ -3189,12 +4024,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self._hud_val_val.setText(f"{v:.2f}")
         self._hud_eng_val.setText(f"{eng:.2f}")
         if hr and hr > 20:
-            self._hud_hr.setText(f"♥  {int(hr):3d} BPM")
+            self._hud_hr_big.setText(f"{int(hr):3d}")
             self._hud_pulse_bpm = float(hr)
             if hasattr(self, "_watch_mandala"):
                 self._watch_mandala.set_bpm(hr)
         else:
-            self._hud_hr.setText("♥  ---  BPM")
+            self._hud_hr_big.setText("---")
             self._hud_pulse_bpm = 0.0
             if hasattr(self, "_watch_mandala"):
                 self._watch_mandala.set_bpm(0)
@@ -3206,19 +4041,25 @@ class MainWindow(QtWidgets.QMainWindow):
             emo, nm = names[k]
             lbl.setText(f"{emo} {nm}  {v_db:+.1f} dB")
         # シーンラベル (sea_widget の判定と整合)
-        # 強度 1-3 ドット: そのシーン条件の強さ
+        # 強度 1-5 ドット: そのシーン条件の強さ
         if a > 0.6 and v < 0.4:
             scene_name = "STORMY"
-            intensity = max(1, min(3, int((a - 0.6) / 0.13) + 1))
+            intensity = max(1, min(5, int((a - 0.6) / 0.08) + 1))
         elif v > 0.55:
             scene_name = "GOLDEN"
-            intensity = max(1, min(3, int((v - 0.55) / 0.15) + 1))
+            intensity = max(1, min(5, int((v - 0.55) / 0.09) + 1))
         else:
             scene_name = "CALM"
-            intensity = max(1, min(3, int((1.0 - abs(a - 0.5) * 2)
-                                          / 0.34) + 1))
-        dots = "●" * intensity + "○" * (3 - intensity)
-        self._hud_scene_lbl.setText(f"▸ {scene_name}   {dots}")
+            intensity = max(1, min(5, int((1.0 - abs(a - 0.5) * 2)
+                                          / 0.20) + 1))
+        dots = "●" * intensity + "○" * (5 - intensity)
+        self._hud_scene_lbl.setText(f"STATUS: {scene_name}")
+        if hasattr(self, "_hud_scene_dots"):
+            self._hud_scene_dots.setText(dots)
+        if hasattr(self, "_hud_audio_meter"):
+            # オーディオメータは Arousal で長さ変化
+            self._hud_audio_meter.set_value(a)
+            self._hud_audio_meter.set_accent(self.theme.accent)
         # 品質ドット (1=Good, 2=OK, 4=Bad)
         if quality and len(quality) >= 4:
             q_colors = {1: "#2ecc71", 2: "#f39c12", 4: "#e74c3c"}
@@ -3418,11 +4259,21 @@ class MainWindow(QtWidgets.QMainWindow):
             norm = max(0.0, min(1.0, (avg + 1.0) / 3.5))
             self.band_bars[band].set_value(norm, raw=avg)
 
-        # Signal Quality
+        # Signal Quality (呼吸アニメ: Good=ゆっくり脈動, Bad=点滅速め)
+        import math as _math_ui
+        t_pulse = now * 1.5
         for i, name in enumerate(CH_NAMES):
             q = quality[i]
             color = QUALITY_COLORS.get(q, "#e74c3c")
-            self.q_dots[name].setStyleSheet(f"font-size: 22px; color: {color};")
+            # Q 値で脈動速度: Good (1) は τ=2s, OK (2) は τ=1s, Bad (4) は τ=0.5s
+            rate = {1: 0.6, 2: 1.4, 4: 2.5}.get(int(q), 2.5)
+            pulse = 0.55 + 0.45 * (0.5 + 0.5 * _math_ui.sin(now * rate))
+            # 透明度を pulse でゆらす (font-size は据置)
+            qc = QtGui.QColor(color)
+            alpha = int(255 * pulse)
+            css_col = f"rgba({qc.red()},{qc.green()},{qc.blue()},{alpha})"
+            self.q_dots[name].setStyleSheet(
+                f"font-size: 22px; color: {css_col};")
             txt = QUALITY_TEXT.get(q, "—")
             self.q_texts[name].setText(txt)
             self.q_texts[name].setStyleSheet(
@@ -3548,6 +4399,15 @@ class MainWindow(QtWidgets.QMainWindow):
                 "font-size: 14px; color: #e74c3c; font-weight: bold;")
         self.rate_label.setText(f"{msg_count * 30} Hz")
 
+        # オーディオレベルメータ更新
+        if hasattr(self, "audio_level_meter"):
+            try:
+                lvl = float(self.audio.get_output_level())
+                # 0..1 にクランプ + 強調 (ピーク見やすく)
+                self.audio_level_meter.set_value(min(1.0, lvl * 3.0))
+            except Exception:
+                pass
+
     def closeEvent(self, event):
         if self.recording:
             self._stop_recording()
@@ -3610,12 +4470,31 @@ def main():
     print("Mind Monitor で Streaming を ON にしてください")
     server = start_osc_thread()
     app = QtWidgets.QApplication(sys.argv)
+
+    # スプラッシュ表示
+    splash = SplashScreen()
+    splash.show()
+    app.processEvents()
+    splash.set_progress(0.15, "Loading audio engine...")
+    app.processEvents()
+
     try:
         win = MainWindow()
-        win.show()
-        print("Window shown. Size:", win.size().width(), "x", win.size().height())
+        splash.set_progress(0.75, "Initializing UI...")
+        app.processEvents()
+        # 短い余韻
+        QtCore.QTimer.singleShot(400, lambda: (
+            splash.set_progress(1.0, "Ready"),
+            win.show(),
+            splash.close(),
+        ))
+        # singleShot 実行までイベントループ稼働
+        # ただ main loop は app.exec_() なので OK
+        print("Window will show. Size:",
+              win.size().width(), "x", win.size().height())
     except Exception:
         traceback.print_exc()
+        splash.close()
         server.shutdown()
         sys.exit(1)
     exit_code = app.exec_()

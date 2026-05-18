@@ -67,6 +67,23 @@ VIDEO_GOLDEN = os.path.join(ASSETS_DIR, "sea_golden.mp4")
 VIDEO_STORM = os.path.join(ASSETS_DIR, "sea_storm.mp4")
 # 海面 morph 動画 (8秒で 0→calm, 3→golden, 6→stormy へ連続変化)
 VIDEO_SURFACE_MORPH = os.path.join(ASSETS_DIR, "sea_surface_morph.mp4")
+# 水中動画 (HR で切替)
+VIDEO_UNDERWATER_LOW = os.path.join(ASSETS_DIR, "sea_underwater_low.mp4")
+VIDEO_UNDERWATER_MID = os.path.join(ASSETS_DIR, "sea_underwater_mid.mp4")
+VIDEO_UNDERWATER_HIGH = os.path.join(ASSETS_DIR, "sea_underwater_high.mp4")
+
+# City 背景画像 (静止画)
+BG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                       "assets", "bg")
+IMAGE_CITY = os.path.join(BG_DIR, "bg_city.png")
+
+# 水中シーン HR 閾値 (ヒステリシス)
+HR_MID_ENTER = 75.0   # ≥ ここで low → mid
+HR_MID_EXIT  = 65.0   # ≤ ここで mid → low
+HR_HIGH_ENTER = 92.0
+HR_HIGH_EXIT  = 82.0
+HR_MIN_DWELL_SEC = 6.0
+HR_EMA_ALPHA = 0.02   # ~3秒 τ
 
 # morph 動画内のシーン代表時刻 (秒)
 MORPH_TIME_CALM = 1.5
@@ -356,6 +373,64 @@ class SeaWidget(QWidget):
         self._target = self._current
         self._fade_start = 0.0
         self._fading = False
+
+        # ===== City 背景画像 =====
+        self._city_image = None
+        if os.path.exists(IMAGE_CITY):
+            self._city_image = QImage(IMAGE_CITY)
+            if self._city_image.isNull():
+                self._city_image = None
+        self._city_available = self._city_image is not None
+
+        # ===== Underwater モード =====
+        # サブビュー切替 ("surface" / "underwater" / "city")
+        self._sub_view = "surface"
+        self._uw_sources = {}
+        for name, path in [("low", VIDEO_UNDERWATER_LOW),
+                             ("mid", VIDEO_UNDERWATER_MID),
+                             ("high", VIDEO_UNDERWATER_HIGH)]:
+            src = _VideoSource(path)
+            if src.available:
+                self._uw_sources[name] = src
+        self._uw_available = bool(self._uw_sources)
+        self._uw_current = "low"
+        self._uw_target = "low"
+        self._uw_fade_start = 0.0
+        self._uw_fading = False
+        self._hr_ema = 60.0
+        self._uw_last_switch = 0.0
+
+        # サブビュー切替ボタン (top-left, 半透明オーバーレイ)
+        self._sub_btns_widget = QWidget(self)
+        sb_lay = self._sub_btns_widget.children()  # placeholder
+        from PyQt5.QtWidgets import QHBoxLayout, QPushButton
+        h = QHBoxLayout(self._sub_btns_widget)
+        h.setContentsMargins(8, 8, 8, 8)
+        h.setSpacing(4)
+        self._sub_btns = {}
+        for key, label in [("surface", "🌅 Surface"),
+                            ("underwater", "🐳 Underwater"),
+                            ("city", "🌆 City")]:
+            b = QPushButton(label)
+            b.setCheckable(True)
+            b.setCursor(Qt.PointingHandCursor)
+            b.setFixedHeight(26)
+            b.clicked.connect(lambda _, k=key: self.set_sub_view(k))
+            h.addWidget(b)
+            self._sub_btns[key] = b
+        self._sub_btns["surface"].setChecked(True)
+        h.addStretch()
+        self._sub_btns_widget.move(8, 8)
+        self._sub_btns_widget.resize(360, 42)
+        self._restyle_sub_btns()
+        if not self._uw_available:
+            self._sub_btns["underwater"].setEnabled(False)
+            self._sub_btns["underwater"].setToolTip(
+                "水中動画 (sea_underwater_*.mp4) が見つかりません")
+        if not self._city_available:
+            self._sub_btns["city"].setEnabled(False)
+            self._sub_btns["city"].setToolTip(
+                "City 画像 (assets/bg/bg_city.png) が見つかりません")
         # シーン選択専用の slow EMA (描画用とは別系統)
         self._scene_a = 0.5
         self._scene_v = 0.5
@@ -391,6 +466,9 @@ class SeaWidget(QWidget):
             self._t["engagement"] = max(0.0, min(1.0, float(engagement)))
         if hr_bpm is not None and hr_bpm > 20:
             self._t["hr"] = float(hr_bpm)
+            # HR EMA (Underwater 切替判定用、別系統)
+            self._hr_ema += HR_EMA_ALPHA * (float(hr_bpm) - self._hr_ema)
+            self._update_underwater_scene()
         if hsi is not None:
             self._t["hsi"] = max(0.0, min(1.0, float(hsi)))
         if signal_fresh is not None:
@@ -415,6 +493,101 @@ class SeaWidget(QWidget):
 
     def trigger_pulse(self, strength=1.0):
         self._rings.append((time.monotonic(), float(strength)))
+
+    def set_sub_view(self, name):
+        if name not in ("surface", "underwater", "city"):
+            return
+        if name == "underwater" and not self._uw_available:
+            return
+        if name == "city" and not self._city_available:
+            return
+        if name == self._sub_view:
+            return
+        self._sub_view = name
+        for k, b in self._sub_btns.items():
+            b.setChecked(k == name)
+        # 選択状態に応じてスタイル再適用 (これしないと active 色が反映されない)
+        self._restyle_sub_btns()
+
+    def _restyle_sub_btns(self):
+        """サブビューボタンのスタイル (半透明 + 選択時に強い accent 発光)."""
+        for key, btn in self._sub_btns.items():
+            active = btn.isChecked()
+            if active:
+                btn.setStyleSheet(
+                    "QPushButton { background-color: rgba(26,188,156,230); "
+                    "color: #ffffff; border: 2px solid #1abc9c; "
+                    "border-radius: 13px; padding: 2px 14px; "
+                    "font-size: 11px; font-weight: bold; "
+                    "letter-spacing: 1px; }")
+                # 発光エフェクト (DropShadow)
+                from PyQt5.QtWidgets import QGraphicsDropShadowEffect
+                eff = btn.graphicsEffect()
+                if not isinstance(eff, QGraphicsDropShadowEffect):
+                    eff = QGraphicsDropShadowEffect(btn)
+                    btn.setGraphicsEffect(eff)
+                eff.setColor(QColor(26, 188, 156, 220))
+                eff.setBlurRadius(20)
+                eff.setOffset(0, 0)
+            else:
+                btn.setStyleSheet(
+                    "QPushButton { background-color: rgba(0,0,0,160); "
+                    "color: #c0c0c0; "
+                    "border: 1px solid rgba(255,255,255,50); "
+                    "border-radius: 13px; padding: 2px 14px; "
+                    "font-size: 11px; letter-spacing: 1px; }"
+                    "QPushButton:hover { background-color: rgba(255,255,255,40); "
+                    "color: #ffffff; border: 1px solid #1abc9c; }"
+                    "QPushButton:disabled { color: #555; "
+                    "border: 1px solid #333; }")
+                btn.setGraphicsEffect(None)
+
+    def resizeEvent(self, event):
+        # サブビューボタン位置を維持
+        if hasattr(self, "_sub_btns_widget"):
+            self._sub_btns_widget.move(8, 8)
+        super().resizeEvent(event)
+
+    # --- Underwater シーン切替 (HR ヒステリシス) -----------------------
+    def _update_underwater_scene(self):
+        """HR EMA に応じて Underwater シーン (low/mid/high) を決定."""
+        if not self._uw_available:
+            return
+        cur = self._uw_target
+        hr = self._hr_ema
+        want = cur
+        if cur == "low":
+            if hr >= HR_HIGH_ENTER:
+                want = "high"
+            elif hr >= HR_MID_ENTER:
+                want = "mid"
+        elif cur == "mid":
+            if hr >= HR_HIGH_ENTER:
+                want = "high"
+            elif hr <= HR_MID_EXIT:
+                want = "low"
+        elif cur == "high":
+            if hr <= HR_HIGH_EXIT and hr >= HR_MID_ENTER:
+                want = "mid"
+            elif hr <= HR_MID_EXIT:
+                want = "low"
+        if want != cur and want in self._uw_sources:
+            now = time.monotonic()
+            if (now - self._uw_last_switch) >= HR_MIN_DWELL_SEC:
+                self._uw_target = want
+                self._uw_fade_start = now
+                self._uw_fading = True
+                self._uw_last_switch = now
+
+    def _uw_fade_progress(self, now):
+        if not self._uw_fading:
+            return 1.0
+        t = (now - self._uw_fade_start) / self.CROSSFADE_SEC
+        if t >= 1.0:
+            self._uw_current = self._uw_target
+            self._uw_fading = False
+            return 1.0
+        return t
 
     # --- シーン切替 ------------------------------------------------------
     def _request_scene(self, name):
@@ -484,7 +657,18 @@ class SeaWidget(QWidget):
         self._bubbles = alive[:180]
 
         # 動画フレーム更新
-        if self._use_morph and self._morph_source is not None:
+        if self._sub_view == "city":
+            pass   # 静止画なので動画 decode 不要
+        elif self._sub_view == "underwater" and self._uw_available:
+            # 水中: 現在シーン + 遷移先シーンを両方デコード (crossfade)
+            rate = 0.7 + self._c["arousal"] * 0.4   # 覚醒で少し速く
+            active = {self._uw_current, self._uw_target}
+            for n in active:
+                src = self._uw_sources.get(n)
+                if src is not None:
+                    src.set_rate(rate)
+                    src.update(now)
+        elif self._use_morph and self._morph_source is not None:
             # シンプル前進ループ. Arousal で再生速度のみ変える.
             # 動画自体に morph が入っているので emotion 連動を捨てても見栄え◯
             rate = 0.5 + self._c["arousal"] * 0.9
@@ -543,7 +727,11 @@ class SeaWidget(QWidget):
                 y = (h - draw_h) // 2
             qp.drawImage(QRectF(x, y, draw_w, draw_h), img)
 
-        if self._use_morph:
+        if self._sub_view == "city" and self._city_available:
+            self._draw_city_frame(qp, w, h)
+        elif self._sub_view == "underwater" and self._uw_available:
+            self._draw_underwater_frame(qp, w, h, now)
+        elif self._use_morph:
             self._draw_morph_frame(qp, w, h)
         elif self._fading and self._target != self._current:
             draw_frame(self._current, 1.0 - progress)
@@ -597,6 +785,96 @@ class SeaWidget(QWidget):
         qp.fillRect(QRectF(0, 0, w, h), vg)
 
         qp.end()
+
+    def _draw_city_frame(self, qp, w, h):
+        """City モード: 静止画 + HR/PPG 同期の動的演出.
+
+        - HR が高い (覚醒モード) → マゼンタ寄り tint + 明度 UP
+        - HR が低い (落ち着き)    → シアン寄り tint + 明度ダウン
+        - PPG 位相に合わせて全体が**鼓動 pulse**
+        - 覚醒度に応じて軽くズーム
+        """
+        import math as _m
+        if self._city_image is None:
+            return
+        img = self._city_image
+        # HR と PPG phase
+        hr = self._hr_ema
+        bpm_active = hr if hr > 20 else 60.0
+        # HR から 0..1 に正規化 (50–100 BPM 範囲)
+        hr_norm = max(0.0, min(1.0, (bpm_active - 50.0) / 50.0))
+        # 鼓動 pulse (PPG phase は SeaWidget._pulse_phase が _tick で進む)
+        x_phase = self._pulse_phase % (2 * _m.pi)
+        beat = _m.exp(-((x_phase - 0.6) ** 2) * 8.0)   # 1 拍ごとの短いピーク
+        beat_intensity = 0.5 + 0.5 * beat   # 0.5..1.0
+
+        # ズーム (覚醒で少し拡大)
+        zoom = 1.0 + 0.05 * self._c["arousal"]
+        src_ratio = img.width() / max(1, img.height())
+        dst_ratio = w / max(1, h)
+        if src_ratio > dst_ratio:
+            draw_h = int(h * zoom)
+            draw_w = int(draw_h * src_ratio)
+        else:
+            draw_w = int(w * zoom)
+            draw_h = int(draw_w / src_ratio)
+        x = (w - draw_w) // 2
+        y = (h - draw_h) // 2
+        qp.drawImage(QRectF(x, y, draw_w, draw_h), img)
+
+        # HR でカラーティント (低HR=cyan / 高HR=magenta) + 拍動明度
+        # cyan (0, 200, 255) ↔ magenta (255, 60, 200) で hr_norm 補間
+        r = int(0 + 255 * hr_norm)
+        g = int(200 - 140 * hr_norm)
+        b = int(255 - 55 * hr_norm)
+        tint_alpha = int(45 * (0.6 + 0.4 * beat_intensity))
+        qp.fillRect(QRectF(0, 0, w, h),
+                    QtGui.QColor(r, g, b, tint_alpha))
+
+        # 鼓動 vignette: 画面中心がフラッシュ
+        if beat_intensity > 0.7:
+            cx, cy = w / 2, h / 2
+            grad = QtGui.QRadialGradient(QtCore.QPointF(cx, cy),
+                                          max(w, h) * 0.5)
+            flash_alpha = int(60 * (beat_intensity - 0.7) * 3.0)
+            grad.setColorAt(0.0, QtGui.QColor(r, g, b, flash_alpha))
+            grad.setColorAt(1.0, QtGui.QColor(r, g, b, 0))
+            qp.fillRect(QRectF(0, 0, w, h), grad)
+
+    def _draw_underwater_frame(self, qp, w, h, now):
+        """Underwater モード: low/mid/high 動画を crossfade."""
+        prog = self._uw_fade_progress(now)
+
+        def draw_uw(name, opacity):
+            if opacity <= 0.01:
+                return
+            src = self._uw_sources.get(name)
+            if src is None:
+                return
+            img = src.image()
+            if img is None:
+                return
+            qp.setOpacity(opacity)
+            src_ratio = img.width() / max(1, img.height())
+            dst_ratio = w / max(1, h)
+            if src_ratio > dst_ratio:
+                draw_h = h
+                draw_w = int(draw_h * src_ratio)
+                x = (w - draw_w) // 2
+                y = 0
+            else:
+                draw_w = w
+                draw_h = int(draw_w / src_ratio)
+                x = 0
+                y = (h - draw_h) // 2
+            qp.drawImage(QRectF(x, y, draw_w, draw_h), img)
+
+        if self._uw_fading and self._uw_target != self._uw_current:
+            draw_uw(self._uw_current, 1.0 - prog)
+            draw_uw(self._uw_target, prog)
+        else:
+            draw_uw(self._uw_target, 1.0)
+        qp.setOpacity(1.0)
 
     def _draw_morph_frame(self, qp, w, h):
         """morph モード: 1 本の動画から現在フレームを描画."""
@@ -687,6 +965,8 @@ class SeaWidget(QWidget):
     def stop(self):
         if self._morph_source is not None:
             self._morph_source.release()
+        for src in self._uw_sources.values():
+            src.release()
         for src in self._sources.values():
             src.release()
 

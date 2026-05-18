@@ -250,6 +250,10 @@ class AudioEngine:
         self.set_bands(**{k: 0.0 for k in BAND_KEYS})
         self.set_reverb_wet(0.0)
 
+    def get_output_level(self):
+        """直近の出力 RMS ピーク (0..1). UI のレベルメータ用."""
+        return getattr(self, "_last_level", 0.0)
+
     # --- sounddevice callback (別スレッド) ---
     def _callback(self, indata, outdata, frames, t, status):
         if status:
@@ -269,6 +273,15 @@ class AudioEngine:
         outdata[:n, :c] = out[:n, :c]
         if n < outdata.shape[0]:
             outdata[n:] = 0
+        # 出力 RMS レベル (UI 表示用、軽い)
+        try:
+            seg = outdata[:n, :c]
+            rms = float(np.sqrt(np.mean(seg * seg)))
+            # 簡易ピーク追従 + 緩い減衰
+            prev = getattr(self, "_last_level", 0.0)
+            self._last_level = max(rms * 1.4, prev * 0.92)
+        except Exception:
+            pass
 
     # --- Stream lifecycle ---
     def start(self, output_index=None):

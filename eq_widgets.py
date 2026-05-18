@@ -976,14 +976,28 @@ class InstrumentFader(QtWidgets.QWidget):
                        QtCore.QPointF(r.right() + 6, gy))
 
         hx = r.center().x()
-        hw = 22
-        hh = 10
+        hw = 26
+        hh = 14
         handle_rect = QtCore.QRectF(hx - hw/2, cur_y - hh/2, hw, hh)
+        # ネオングロー (3 段)
         p.setPen(QtCore.Qt.NoPen)
-        p.setBrush(QtGui.QColor(*glow, 70))
-        p.drawRoundedRect(handle_rect.adjusted(-3, -2, 3, 2), 6, 6)
-        p.setBrush(QtGui.QColor(accent))
-        p.setPen(QtGui.QPen(QtGui.QColor("#ffffff"), 1))
+        for mult, alpha in [(2.4, 30), (1.6, 70), (1.0, 130)]:
+            outer = handle_rect.adjusted(
+                -3 * mult, -2 * mult, 3 * mult, 2 * mult)
+            grad = QtGui.QRadialGradient(outer.center(), outer.width() / 2)
+            grad.setColorAt(0.0, QtGui.QColor(*glow, alpha))
+            grad.setColorAt(1.0, QtGui.QColor(*glow, 0))
+            p.setBrush(grad)
+            p.drawRoundedRect(outer, 8, 8)
+        # 本体
+        body_grad = QtGui.QLinearGradient(0, handle_rect.top(), 0,
+                                           handle_rect.bottom())
+        body_grad.setColorAt(0.0, QtGui.QColor(*glow, 255))
+        body_grad.setColorAt(1.0, QtGui.QColor(
+            max(0, glow[0] - 50), max(0, glow[1] - 50),
+            max(0, glow[2] - 50), 255))
+        p.setBrush(body_grad)
+        p.setPen(QtGui.QPen(QtGui.QColor("#ffffff"), 1.5))
         p.drawRoundedRect(handle_rect, 4, 4)
 
         val_font = QtGui.QFont("Segoe UI", 9, QtGui.QFont.Bold)
