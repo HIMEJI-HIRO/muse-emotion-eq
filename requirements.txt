@@ -19,5 +19,9 @@ python-osc>=1.8
 # Video background (Emotional Seascape)
 opencv-python>=4.8
 
-# Optional: wavelet scalogram
-# pywavelets>=1.4
+# Optional: 3D widgets (band power gauges 等は 2D で十分)
+# PyOpenGL>=3.1
+# pywavelets>=1.4  # 旧 Wavelet Scalogram (現状不要)
+
+# 画像処理 (アセットの crop/preview に使用)
+Pillow>=10.0

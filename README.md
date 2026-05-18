@@ -42,14 +42,43 @@ Vital Sensing × Affective Computing × Audio の交差点を、**MVP として 
 
 ## ⚡ Features
 
-| | |
-|---|---|
-| 🧠 **EEG → EQ Auto** | Arousal / Valence / Engagement に応じて 6 バンド (Drums / Bass / Mid / Vocals / High / Air) のゲインを自動追従 |
-| 🌊 **Emotional Seascape** | Calm / Golden / Storm の 3 シーン動画が感情でクロスフェード切替。HR で海面が脈動 |
-| 🎚 **Manual / Auto モード** | 手動フェーダ操作と EEG 自動制御を切替 |
-| 🎨 **Customizable Theme** | アクセント 15 色 × 背景 6 パレット = **90 通り** |
-| 📡 **Mind Monitor OSC** | Muse S を Bluetooth 経由でスマホ → PC へ無線伝送 |
-| 🤖 **AI 共同開発** | Claude (Anthropic) と 2 週間で MVP |
+### 🎛 Audio Engine
+- **EEG → EQ Auto**: Arousal / Valence / Engagement で 6 バンド (Drums / Bass / Mid / Vocals / High / Air) + Reverb を自動追従
+- **Manual / Auto モード切替**: 手動フェーダと EEG 駆動を即切替
+- VB-CABLE → pedalboard → 任意出力デバイス
+- リアルタイムオーディオレベルメータ (ヘッダ)
+
+### 🎨 三段モード UI
+- **🧠 Studio**: パーティクル EEG / Spectrogram / 5バンドリングゲージ / Russell 2D マップ / 信号品質 / HR / Adaptive EQ — すべてフル表示
+- **🎚 Listen**: 大きな感情ラベル "Happy" + リボン感情バー + 6 楽器サークル (テクスチャ画像) + プリセット
+- **🌊 Watch**: フルスクリーン没入。サブビュー 3 種:
+  - **Surface** — 海面 morph 動画 (Arousal で再生速度変化)
+  - **Underwater** — HR 駆動 3 段階の海中映像 (空/小魚/ジンベエ+マンタ)
+  - **City** — サイバーパンク都市 (HR シンクで明度・色温度・鼓動 vignette)
+
+### 🌟 Visual Polish
+- **神経網オーブ** (Fibonacci 球面 120点パーティクル, マゼンタ+シアン渦巻き)
+- **Matrix 風 binary rain** 背景
+- **Tron 風 wireframe grid 床** (パースペクティブ)
+- **HUD パネル**: NEURAL STATE / EQ STATE / [STATUS: CALM ●●●○○]
+- **六角形 EQ ラベル + 放射状ライン** (中心オーブから)
+- **δθαβγ ギリシャ文字弧** 配置
+- **回路パターン背景ヘッダ** + accent neon 縁発光
+- **起動時スプラッシュスクリーン** (回路 + neon タイトル + プログレスバー)
+- **モード切替スライドアニメ** (260ms + opacity)
+- **カードホバー info popup** (accent border + fade/rise アニメ)
+
+### ⚙ Customization
+- アクセント 15 色 × 背景 6 パレット = **90 通り**
+- 走査線 / fog / グリッター / 泡 etc. の演出パラメータ調整可
+
+### 📡 Hardware Integration
+- **Muse S Athena** (EEG 4ch + PPG + 光学) → Mind Monitor (iOS/Android) → PC OSC
+- Bluetooth レイテンシ対応 (BLOCK_SIZE 1024, latency='high')
+
+### 🤖 AI Workflow
+- **Claude (Anthropic)** と 2 週間で MVP
+- 人間が**意思決定** / AI が**実装** の明確な分業
 
 ---
 
@@ -160,10 +189,13 @@ muse-emotion-eq/
 - [x] **Phase 0** — Muse 受信 / 可視化基盤
 - [x] **Phase 1** — 6-band EQ + 感情自動制御
 - [x] **Phase 1.5** — Emotional Seascape (Calm / Golden / Storm)
-- [x] **Phase 2 — UI 大改修** — Studio / Listen / Watch 3 モード, パーティクル EEG, 神経網オーブ, リボン感情バー
-- [ ] **Phase 3** — Underwater シーン追加 (HR 駆動の海中映像 3 段階)
+- [x] **Phase 2** — UI 大改修 (Studio / Listen / Watch 3 モード, パーティクル EEG, 神経網オーブ, リボン感情バー)
+- [x] **Phase 3** — Underwater シーン (HR 駆動の海中映像 3 段階)
+- [x] **Phase 3.5** — City サブビュー (HR シンクの色変化)
+- [x] **Phase 3.6** — スプラッシュ / オーディオメータ / カード hover popup / 品質ドット呼吸アニメ
 - [ ] **Phase 4** — CSV セッションリプレイ機能
 - [ ] **Phase 5** — 個人 EEG キャリブレーション (ML)
+- [ ] **Phase 6** — 1分デモ動画 + UI スクショ撮影 + Public 化
 
 ---
 
