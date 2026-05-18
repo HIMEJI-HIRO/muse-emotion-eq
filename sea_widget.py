@@ -829,16 +829,16 @@ class SeaWidget(QWidget):
         b = int(255 - 55 * hr_norm)
         tint_alpha = int(45 * (0.6 + 0.4 * beat_intensity))
         qp.fillRect(QRectF(0, 0, w, h),
-                    QtGui.QColor(r, g, b, tint_alpha))
+                    QColor(r, g, b, tint_alpha))
 
         # 鼓動 vignette: 画面中心がフラッシュ
         if beat_intensity > 0.7:
             cx, cy = w / 2, h / 2
-            grad = QtGui.QRadialGradient(QtCore.QPointF(cx, cy),
+            grad = QRadialGradient(QPointF(cx, cy),
                                           max(w, h) * 0.5)
             flash_alpha = int(60 * (beat_intensity - 0.7) * 3.0)
-            grad.setColorAt(0.0, QtGui.QColor(r, g, b, flash_alpha))
-            grad.setColorAt(1.0, QtGui.QColor(r, g, b, 0))
+            grad.setColorAt(0.0, QColor(r, g, b, flash_alpha))
+            grad.setColorAt(1.0, QColor(r, g, b, 0))
             qp.fillRect(QRectF(0, 0, w, h), grad)
 
     def _draw_underwater_frame(self, qp, w, h, now):

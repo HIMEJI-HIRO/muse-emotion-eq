@@ -31,12 +31,19 @@ Vital Sensing × Affective Computing × Audio の交差点を、**MVP として 
 
 ## 🎬 Demo
 
-| Studio (分析) | Listen (操作) | Watch (没入) |
-|:---:|:---:|:---:|
-| ![studio](docs/images/ui_studio.png) | ![listen](docs/images/ui_listen.png) | ![watch](docs/images/ui_watch.png) |
-| Raw EEG・スペクトログラム・Russell モデル | リボン感情バー + 楽器サークル | 神経網オーブ + 海背景 |
+### Three Modes
 
-> ※ スクショは追加予定. 1 分デモ動画: [demo/demo_1min.mp4](demo/demo_1min.mp4)
+| 🧠 Studio (分析) | 🎚 Listen (操作) | 🌊 Watch (没入) |
+|:---:|:---:|:---:|
+| ![studio](docs/images/ui_studio.png) | ![listen](docs/images/ui_listen.png) | ![watch](docs/images/ui_watch_surface.png) |
+| パーティクル EEG / Band Power Ring / Russell Pad / Spectrogram / Adaptive EQ | リボン感情バー / 楽器サークル / Big "Happy" / プリセット | 神経網オーブ / Matrix rain / Tron Grid / 海背景 |
+
+### Watch — 3 Subviews driven by Heart Rate
+
+| 🌅 Surface | 🐳 Underwater | 🌆 City |
+|:---:|:---:|:---:|
+| ![surface](docs/images/ui_watch_surface.png) | ![underwater](docs/images/ui_watch_underwater_high.png) | ![city](docs/images/ui_watch_city.png) |
+| 海面 morph (Arousal で速度可変) | HR で 3段階 (空海 → 魚群 → ジンベエ + マンタ) | サイバーパンク都市 (HR で色温度・脈動 vignette) |
 
 ---
 
