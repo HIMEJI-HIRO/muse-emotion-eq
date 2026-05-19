@@ -2582,6 +2582,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.listen_page = self._build_listen_page()
         self.stack.addWidget(self.listen_page)
 
+        # --- Footer ステータスバー (常時表示) ---
+        self.footer = self._build_footer()
+        root.addWidget(self.footer)
+
         self._mode = "studio"
         self._update_mode_btn_style()
 
@@ -2608,17 +2612,26 @@ class MainWindow(QtWidgets.QMainWindow):
         self.esc_sc = QtWidgets.QShortcut(QtGui.QKeySequence("Esc"), self)
         self.esc_sc.activated.connect(self._restore_if_focused)
 
-        # キーボードショートカット
+        # キーボードショートカット (context aware)
         QtWidgets.QShortcut(QtGui.QKeySequence("1"), self,
-                            activated=lambda: self._set_mode("studio"))
+                            activated=lambda: self._key_num(1))
         QtWidgets.QShortcut(QtGui.QKeySequence("2"), self,
-                            activated=lambda: self._set_mode("listen"))
+                            activated=lambda: self._key_num(2))
         QtWidgets.QShortcut(QtGui.QKeySequence("3"), self,
-                            activated=lambda: self._set_mode("watch"))
+                            activated=lambda: self._key_num(3))
+        QtWidgets.QShortcut(QtGui.QKeySequence("4"), self,
+                            activated=lambda: self._key_num(4))
         QtWidgets.QShortcut(QtGui.QKeySequence("Space"), self,
                             activated=self._toggle_audio)
         QtWidgets.QShortcut(QtGui.QKeySequence("R"), self,
                             activated=self._toggle_recording)
+        # モードクイックスイッチ (Watch でも使えるよう Ctrl 修飾子つき)
+        QtWidgets.QShortcut(QtGui.QKeySequence("Ctrl+1"), self,
+                            activated=lambda: self._set_mode("studio"))
+        QtWidgets.QShortcut(QtGui.QKeySequence("Ctrl+2"), self,
+                            activated=lambda: self._set_mode("listen"))
+        QtWidgets.QShortcut(QtGui.QKeySequence("Ctrl+3"), self,
+                            activated=lambda: self._set_mode("watch"))
         QtWidgets.QShortcut(QtGui.QKeySequence("F1"), self,
                             activated=self._show_help)
 
@@ -2920,6 +2933,52 @@ class MainWindow(QtWidgets.QMainWindow):
         row2.addWidget(self.rate_label)
 
         outer.addLayout(row2)
+        return w
+
+    def _build_footer(self):
+        """画面下端の薄いステータスバー. 常時表示で要点を伝える."""
+        w = QtWidgets.QFrame()
+        w.setObjectName("footer")
+        w.setFixedHeight(28)
+        w.setStyleSheet(
+            "QFrame#footer { background-color: rgba(10, 10, 16, 200); "
+            "border: 1px solid #2a2a2c; border-radius: 8px; }"
+            "QLabel { background: transparent; border: none; }"
+        )
+        h = QtWidgets.QHBoxLayout(w)
+        h.setContentsMargins(16, 4, 16, 4)
+        h.setSpacing(20)
+
+        def _lbl(text, color="#9a9a9a", monospace=False, fixed_w=None):
+            l = QtWidgets.QLabel(text)
+            font_family = ("'Consolas', 'JetBrains Mono', monospace"
+                           if monospace else "")
+            l.setStyleSheet(
+                f"color: {color}; font-size: 10px; "
+                f"letter-spacing: 0.5px; "
+                + (f"font-family: {font_family};" if font_family else ""))
+            if fixed_w is not None:
+                l.setFixedWidth(fixed_w)
+            return l
+
+        self._footer_mode = _lbl("🧠 STUDIO", fixed_w=110)
+        self._footer_eng = _lbl("ENG: --", monospace=True, fixed_w=110)
+        self._footer_aro = _lbl("ARO: --", monospace=True, fixed_w=110)
+        self._footer_val = _lbl("VAL: --", monospace=True, fixed_w=110)
+        self._footer_hr = _lbl("♥ --- BPM", color="#e74c3c",
+                                monospace=True, fixed_w=130)
+        self._footer_audio = _lbl("⚡ Audio: OFF", fixed_w=160)
+        self._footer_clock = _lbl("--:--:--", monospace=True, fixed_w=80)
+        self._footer_hint = _lbl("F1 = Help", color="#5a5a5a")
+        h.addWidget(self._footer_mode)
+        h.addWidget(self._footer_eng)
+        h.addWidget(self._footer_aro)
+        h.addWidget(self._footer_val)
+        h.addWidget(self._footer_hr)
+        h.addWidget(self._footer_audio)
+        h.addStretch()
+        h.addWidget(self._footer_clock)
+        h.addWidget(self._footer_hint)
         return w
 
     def _small_label(self, text):
@@ -3743,6 +3802,36 @@ class MainWindow(QtWidgets.QMainWindow):
             "font-size: 11px; font-weight: 600; }}"
         )
 
+    def _key_num(self, n):
+        """1/2/3/4 キーの context-aware 処理.
+        Watch モード: Surface/Underwater/City/Forest にサブビュー切替.
+        その他: Studio/Listen/Watch にモード切替 (4 は何もしない).
+        """
+        if getattr(self, "_mode", "studio") == "watch":
+            sea = getattr(self, "sea_widget", None)
+            if sea is None:
+                return
+            sub_map = {1: ("surface", "🌅 Surface"),
+                       2: ("underwater", "🐳 Underwater"),
+                       3: ("city", "🌆 City"),
+                       4: ("forest", "🌲 Forest")}
+            if n in sub_map:
+                key, label = sub_map[n]
+                if sea.set_sub_view(key) is None:
+                    pass
+                # ボタン UI も同期
+                if key in getattr(sea, "_sub_btns", {}):
+                    sea._sub_btns[key].setChecked(True)
+                    for k, b in sea._sub_btns.items():
+                        b.setChecked(k == key)
+                    if hasattr(sea, "_restyle_sub_btns"):
+                        sea._restyle_sub_btns()
+                self._show_toast(label)
+        else:
+            mode_map = {1: "studio", 2: "listen", 3: "watch"}
+            if n in mode_map:
+                self._set_mode(mode_map[n])
+
     def _open_settings(self):
         dlg = _SettingsDialog(self, theme=self.theme)
         if dlg.exec_() == QtWidgets.QDialog.Accepted:
@@ -3756,9 +3845,17 @@ class MainWindow(QtWidgets.QMainWindow):
         msg.setText(
             "<h3>⌨ Keyboard Shortcuts</h3>"
             "<table cellspacing=8>"
+            "<tr><td colspan=2><b>— Default (Studio / Listen) —</b></td></tr>"
             "<tr><td><b>1</b></td><td>🧠 Studio mode</td></tr>"
             "<tr><td><b>2</b></td><td>🎚 Listen mode</td></tr>"
             "<tr><td><b>3</b></td><td>🌊 Watch mode</td></tr>"
+            "<tr><td colspan=2><b>— In Watch mode —</b></td></tr>"
+            "<tr><td><b>1</b></td><td>🌅 Surface</td></tr>"
+            "<tr><td><b>2</b></td><td>🐳 Underwater</td></tr>"
+            "<tr><td><b>3</b></td><td>🌆 City</td></tr>"
+            "<tr><td><b>4</b></td><td>🌲 Forest</td></tr>"
+            "<tr><td colspan=2><b>— Anywhere —</b></td></tr>"
+            "<tr><td><b>Ctrl + 1/2/3</b></td><td>Mode switch from anywhere</td></tr>"
             "<tr><td><b>Space</b></td><td>♪ Audio ON/OFF</td></tr>"
             "<tr><td><b>R</b></td><td>● Toggle REC</td></tr>"
             "<tr><td><b>Esc</b></td><td>Restore from focused card</td></tr>"
@@ -4832,6 +4929,27 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.audio_level_meter.set_value(min(1.0, lvl * 3.0))
             except Exception:
                 pass
+
+        # フッターステータスバー更新
+        if hasattr(self, "_footer_mode"):
+            mode_labels = {"studio": "🧠 STUDIO",
+                           "listen": "🎚 LISTEN",
+                           "watch": "🌊 WATCH"}
+            self._footer_mode.setText(
+                mode_labels.get(getattr(self, "_mode", "studio"), "?"))
+            a_v = rus.get("arousal", 0.5)
+            v_v = rus.get("valence", 0.5)
+            self._footer_aro.setText(f"ARO: {a_v:.2f}")
+            self._footer_val.setText(f"VAL: {v_v:.2f}")
+            self._footer_eng.setText(f"ENG: {eng:.2f}")
+            if hr_osc and hr_osc > 20:
+                self._footer_hr.setText(f"♥ {int(hr_osc):3d} BPM")
+            else:
+                self._footer_hr.setText("♥ --- BPM")
+            audio_txt = (f"⚡ Audio: ON" if self.audio.running
+                         else "⚡ Audio: OFF")
+            self._footer_audio.setText(audio_txt)
+            self._footer_clock.setText(time.strftime("%H:%M:%S"))
 
     def closeEvent(self, event):
         if self.recording:
