@@ -31,6 +31,12 @@ Vital Sensing × Affective Computing × Audio の交差点を、**MVP として 
 
 ## 🎬 Demo
 
+### 🎞 Intro
+
+[![demo intro](demo/screenshots/promo_thumb.png)](demo/promo_intro.mp4)
+
+> Brain hologram → neural network → music waveform → ocean horizon (8s cinematic intro)
+
 ### Three Modes
 
 | 🧠 Studio (分析) | 🎚 Listen (操作) | 🌊 Watch (没入) |

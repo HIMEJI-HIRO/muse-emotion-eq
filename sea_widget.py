@@ -72,10 +72,11 @@ VIDEO_UNDERWATER_LOW = os.path.join(ASSETS_DIR, "sea_underwater_low.mp4")
 VIDEO_UNDERWATER_MID = os.path.join(ASSETS_DIR, "sea_underwater_mid.mp4")
 VIDEO_UNDERWATER_HIGH = os.path.join(ASSETS_DIR, "sea_underwater_high.mp4")
 
-# City 背景画像 (静止画)
+# City 背景 (動画優先、無ければ静止画にフォールバック)
 BG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                        "assets", "bg")
 IMAGE_CITY = os.path.join(BG_DIR, "bg_city.png")
+VIDEO_CITY = os.path.join(ASSETS_DIR, "sea_city.mp4")
 
 # 水中シーン HR 閾値 (ヒステリシス)
 HR_MID_ENTER = 75.0   # ≥ ここで low → mid
@@ -374,13 +375,19 @@ class SeaWidget(QWidget):
         self._fade_start = 0.0
         self._fading = False
 
-        # ===== City 背景画像 =====
+        # ===== City 背景 (動画優先) =====
+        self._city_video = None
         self._city_image = None
-        if os.path.exists(IMAGE_CITY):
+        if os.path.exists(VIDEO_CITY):
+            v = _VideoSource(VIDEO_CITY)
+            if v.available:
+                self._city_video = v
+        if self._city_video is None and os.path.exists(IMAGE_CITY):
             self._city_image = QImage(IMAGE_CITY)
             if self._city_image.isNull():
                 self._city_image = None
-        self._city_available = self._city_image is not None
+        self._city_available = (self._city_video is not None
+                                 or self._city_image is not None)
 
         # ===== Underwater モード =====
         # サブビュー切替 ("surface" / "underwater" / "city")
@@ -658,7 +665,11 @@ class SeaWidget(QWidget):
 
         # 動画フレーム更新
         if self._sub_view == "city":
-            pass   # 静止画なので動画 decode 不要
+            if self._city_video is not None:
+                # Arousal で速度可変
+                rate = 0.7 + self._c["arousal"] * 0.5
+                self._city_video.set_rate(rate)
+                self._city_video.update(now)
         elif self._sub_view == "underwater" and self._uw_available:
             # 水中: 現在シーン + 遷移先シーンを両方デコード (crossfade)
             rate = 0.7 + self._c["arousal"] * 0.4   # 覚醒で少し速く
@@ -787,7 +798,7 @@ class SeaWidget(QWidget):
         qp.end()
 
     def _draw_city_frame(self, qp, w, h):
-        """City モード: 静止画 + HR/PPG 同期の動的演出.
+        """City モード: 動画 (or 静止画) + HR/PPG 同期の動的演出.
 
         - HR が高い (覚醒モード) → マゼンタ寄り tint + 明度 UP
         - HR が低い (落ち着き)    → シアン寄り tint + 明度ダウン
@@ -795,9 +806,13 @@ class SeaWidget(QWidget):
         - 覚醒度に応じて軽くズーム
         """
         import math as _m
-        if self._city_image is None:
+        # 動画優先、無ければ静止画
+        if self._city_video is not None:
+            img = self._city_video.image()
+        else:
+            img = self._city_image
+        if img is None:
             return
-        img = self._city_image
         # HR と PPG phase
         hr = self._hr_ema
         bpm_active = hr if hr > 20 else 60.0
@@ -965,6 +980,8 @@ class SeaWidget(QWidget):
     def stop(self):
         if self._morph_source is not None:
             self._morph_source.release()
+        if self._city_video is not None:
+            self._city_video.release()
         for src in self._uw_sources.values():
             src.release()
         for src in self._sources.values():
