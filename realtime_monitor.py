@@ -2959,6 +2959,38 @@ class MainWindow(QtWidgets.QMainWindow):
             lambda _: self._show_about())
         row1.addWidget(self.settings_btn)
 
+        # 音量スライダー
+        self.volume_label = QtWidgets.QLabel("🔊")
+        self.volume_label.setStyleSheet(
+            "font-size: 13px; color: #c0c0c0; background: transparent;")
+        row1.addWidget(self.volume_label)
+        self.volume_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        self.volume_slider.setRange(0, 150)
+        self.volume_slider.setValue(100)
+        self.volume_slider.setFixedWidth(90)
+        self.volume_slider.setFixedHeight(16)
+        ar_v = QtGui.QColor(self.theme.accent).red()
+        ag_v = QtGui.QColor(self.theme.accent).green()
+        ab_v = QtGui.QColor(self.theme.accent).blue()
+        self.volume_slider.setStyleSheet(
+            "QSlider::groove:horizontal { background: rgba(255,255,255,30); "
+            "height: 4px; border-radius: 2px; }"
+            f"QSlider::sub-page:horizontal {{ background: rgba("
+            f"{ar_v},{ag_v},{ab_v},220); border-radius: 2px; }}"
+            f"QSlider::handle:horizontal {{ background: {self.theme.accent}; "
+            "width: 12px; height: 12px; border-radius: 6px; "
+            "margin: -4px 0; }}"
+        )
+        self.volume_slider.valueChanged.connect(self._on_volume_changed)
+        self.volume_slider.setToolTip("Master volume (0–150%)")
+        row1.addWidget(self.volume_slider)
+        self.volume_val_label = QtWidgets.QLabel("100%")
+        self.volume_val_label.setStyleSheet(
+            "color: #c0c0c0; font-family: 'Consolas', monospace; "
+            "font-size: 10px; background: transparent;")
+        self.volume_val_label.setFixedWidth(36)
+        row1.addWidget(self.volume_val_label)
+
         # オーディオレベルメータ
         self.audio_level_meter = _StatusMeter()
         self.audio_level_meter.setFixedWidth(100)
@@ -3004,6 +3036,20 @@ class MainWindow(QtWidgets.QMainWindow):
                                           + " QComboBox { min-width: 90px; }")
         self.theme_selector.currentTextChanged.connect(self.theme.set)
         row2.addWidget(self.theme_selector)
+
+        # カスタム色ピッカー
+        self.theme_color_btn = QtWidgets.QPushButton("🎨")
+        self.theme_color_btn.setCursor(QtCore.Qt.PointingHandCursor)
+        self.theme_color_btn.setFixedSize(22, 22)
+        self.theme_color_btn.setStyleSheet(
+            "QPushButton { background-color: transparent; "
+            "color: #c0c0c0; border: 1px solid #3a3a3a; "
+            "border-radius: 11px; font-size: 11px; }"
+            "QPushButton:hover { border-color: #c0c0c0; }"
+        )
+        self.theme_color_btn.setToolTip("Pick custom accent color")
+        self.theme_color_btn.clicked.connect(self._pick_custom_accent)
+        row2.addWidget(self.theme_color_btn)
 
         # BG
         row2.addWidget(self._small_label("BG"))
@@ -3096,6 +3142,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                 monospace=True, fixed_w=130)
         self._footer_audio = _lbl("⚡ Audio: OFF", fixed_w=160)
         self._footer_clock = _lbl("--:--:--", monospace=True, fixed_w=80)
+        self._footer_uptime = _lbl("⌛ 00:00", monospace=True, fixed_w=80)
         self._footer_hint = _lbl("F1 = Help", color="#5a5a5a")
         h.addWidget(self._footer_mode)
         h.addWidget(self._footer_eng)
@@ -3104,8 +3151,14 @@ class MainWindow(QtWidgets.QMainWindow):
         h.addWidget(self._footer_hr)
         h.addWidget(self._footer_audio)
         h.addStretch()
+        h.addWidget(self._footer_uptime)
         h.addWidget(self._footer_clock)
         h.addWidget(self._footer_hint)
+        # アプリ起動時刻
+        self._app_start_time = time.time()
+        # HR フラッシュ用前回値
+        self._prev_hr_displayed = -1
+        self._hr_flash_until = 0.0
         return w
 
     def _small_label(self, text):
@@ -3984,6 +4037,32 @@ class MainWindow(QtWidgets.QMainWindow):
         eff.setColor(QtGui.QColor(ar, ag, ab, int(220 * pulse)))
         eff.setBlurRadius(12 + 14 * pulse)
         eff.setOffset(0, 0)
+
+    def _pick_custom_accent(self):
+        """QColorDialog で任意の accent 色を選んで適用."""
+        cur = QtGui.QColor(self.theme.accent)
+        color = QtWidgets.QColorDialog.getColor(
+            cur, self, "Choose custom accent color")
+        if color.isValid():
+            self.theme.set_custom_accent(color.name())
+            self._show_toast(f"🎨 Accent → {color.name()}")
+
+    def _on_volume_changed(self, val):
+        try:
+            self.audio.set_master_volume(val)
+        except Exception:
+            pass
+        if hasattr(self, "volume_val_label"):
+            self.volume_val_label.setText(f"{int(val)}%")
+            # ミュート系のアイコン切替
+            if val == 0:
+                self.volume_label.setText("🔇")
+            elif val < 50:
+                self.volume_label.setText("🔈")
+            elif val < 110:
+                self.volume_label.setText("🔉")
+            else:
+                self.volume_label.setText("🔊")
 
     def _open_settings(self):
         dlg = _SettingsDialog(self, theme=self.theme)
@@ -5135,14 +5214,37 @@ class MainWindow(QtWidgets.QMainWindow):
             self._footer_aro.setText(f"ARO: {a_v:.2f}")
             self._footer_val.setText(f"VAL: {v_v:.2f}")
             self._footer_eng.setText(f"ENG: {eng:.2f}")
-            if hr_osc and hr_osc > 20:
-                self._footer_hr.setText(f"♥ {int(hr_osc):3d} BPM")
+            cur_hr_int = int(hr_osc) if hr_osc and hr_osc > 20 else -1
+            if cur_hr_int >= 0:
+                self._footer_hr.setText(f"♥ {cur_hr_int:3d} BPM")
             else:
                 self._footer_hr.setText("♥ --- BPM")
+            # HR 値変化フラッシュ
+            if cur_hr_int >= 0 and cur_hr_int != self._prev_hr_displayed:
+                self._prev_hr_displayed = cur_hr_int
+                self._hr_flash_until = now + 0.4
+            if now < self._hr_flash_until:
+                self._footer_hr.setStyleSheet(
+                    f"color: {self.theme.accent}; "
+                    "font-family: 'Consolas', monospace; font-size: 11px; "
+                    "font-weight: bold; letter-spacing: 0.5px;")
+            else:
+                self._footer_hr.setStyleSheet(
+                    "color: #e74c3c; "
+                    "font-family: 'Consolas', monospace; font-size: 10px; "
+                    "letter-spacing: 0.5px;")
             audio_txt = (f"⚡ Audio: ON" if self.audio.running
                          else "⚡ Audio: OFF")
             self._footer_audio.setText(audio_txt)
             self._footer_clock.setText(time.strftime("%H:%M:%S"))
+            # Uptime
+            elapsed = int(now - self._app_start_time)
+            mm, ss = divmod(elapsed, 60)
+            hh, mm = divmod(mm, 60)
+            if hh > 0:
+                self._footer_uptime.setText(f"⌛ {hh:d}:{mm:02d}:{ss:02d}")
+            else:
+                self._footer_uptime.setText(f"⌛ {mm:02d}:{ss:02d}")
 
     def closeEvent(self, event):
         if self.recording:

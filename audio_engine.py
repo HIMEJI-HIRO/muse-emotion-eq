@@ -21,7 +21,7 @@ import numpy as np
 try:
     import sounddevice as sd
     from pedalboard import (Pedalboard, LowShelfFilter, HighShelfFilter,
-                            PeakFilter, Reverb)
+                            PeakFilter, Reverb, Gain)
     HAS_AUDIO = True
     _IMPORT_ERROR = None
 except ImportError as e:
@@ -191,7 +191,10 @@ class AudioEngine:
                                wet_level=0.0, dry_level=1.0)
                         if HAS_AUDIO else None)
         if HAS_AUDIO:
-            chain = [self._filters[k] for k in BAND_KEYS] + [self._reverb]
+            # 末尾に Gain を入れて UI からマスター音量を制御
+            self._master_gain = Gain(gain_db=0.0)
+            chain = [self._filters[k] for k in BAND_KEYS] + [
+                self._reverb, self._master_gain]
             self._board = Pedalboard(chain)
         else:
             self._board = None
@@ -253,6 +256,27 @@ class AudioEngine:
     def get_output_level(self):
         """直近の出力 RMS ピーク (0..1). UI のレベルメータ用."""
         return getattr(self, "_last_level", 0.0)
+
+    def set_master_volume(self, percent):
+        """マスター音量 (0..150%). 100%=0dB, 0%=-inf (簡易には -40dB)."""
+        if not HAS_AUDIO or not hasattr(self, "_master_gain"):
+            return
+        p = max(0.0, min(1.5, float(percent) / 100.0))
+        if p <= 0.001:
+            db = -60.0
+        else:
+            db = 20.0 * np.log10(p)
+        with self._lock:
+            try:
+                self._master_gain.gain_db = float(db)
+            except Exception:
+                pass
+
+    def get_master_volume(self):
+        if not HAS_AUDIO or not hasattr(self, "_master_gain"):
+            return 100.0
+        db = self._master_gain.gain_db
+        return float(10.0 ** (db / 20.0) * 100.0)
 
     # --- sounddevice callback (別スレッド) ---
     def _callback(self, indata, outdata, frames, t, status):

@@ -187,6 +187,8 @@ class ThemeManager:
         self.name = name if name in THEMES else DEFAULT_THEME
         self.bg_name = bg_name if bg_name in BG_PALETTES else DEFAULT_BG
         self._listeners = []
+        # カスタム色 (set_custom_accent で設定されたらこれが優先)
+        self._custom = None    # dict {"accent", "accent_dark", "accent_glow"}
 
     def subscribe(self, callback):
         """テーマ変更時 (accent / bg どちらでも) に呼ばれる."""
@@ -200,9 +202,32 @@ class ThemeManager:
                 print(f"[theme] listener error: {e}")
 
     def set(self, name):
-        if name not in THEMES or name == self.name:
+        if name not in THEMES:
+            return
+        # 既存テーマ選択時はカスタム色をクリア
+        self._custom = None
+        if name == self.name:
             return
         self.name = name
+        self._notify()
+
+    def set_custom_accent(self, hex_color):
+        """任意のアクセント色をセット (プリセット外)."""
+        try:
+            from PyQt5.QtGui import QColor
+        except Exception:
+            return
+        c = QColor(hex_color)
+        if not c.isValid():
+            return
+        # 暗色派生 (V × 0.7)
+        dark = QColor.fromHsv(c.hue(), c.saturation(),
+                               max(0, int(c.value() * 0.7)))
+        self._custom = {
+            "accent": c.name(),
+            "accent_dark": dark.name(),
+            "accent_glow": (c.red(), c.green(), c.blue()),
+        }
         self._notify()
 
     def set_bg(self, bg_name):
@@ -214,14 +239,20 @@ class ThemeManager:
     # --- Accent ----------------------------------------------------------
     @property
     def accent(self):
+        if self._custom:
+            return self._custom["accent"]
         return THEMES[self.name]["accent"]
 
     @property
     def accent_dark(self):
+        if self._custom:
+            return self._custom["accent_dark"]
         return THEMES[self.name]["accent_dark"]
 
     @property
     def accent_glow(self):
+        if self._custom:
+            return self._custom["accent_glow"]
         return THEMES[self.name]["accent_glow"]
 
     def accent_rgba(self, alpha=60):
