@@ -2641,6 +2641,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self._rec_pulse_timer.timeout.connect(self._rec_pulse_tick)
         self._rec_pulse_timer.start(80)
 
+        # Audio ON 中の呼吸アニメ
+        self._audio_pulse_phase = 0.0
+        self._audio_pulse_timer = QtCore.QTimer(self)
+        self._audio_pulse_timer.timeout.connect(self._audio_pulse_tick)
+        self._audio_pulse_timer.start(80)
+
         # 初回起動時のみ Welcome オーバーレイ
         QtCore.QTimer.singleShot(400, self._maybe_show_welcome)
 
@@ -2828,8 +2834,13 @@ class MainWindow(QtWidgets.QMainWindow):
             f"{QtGui.QColor(self.theme.accent).blue()},60); "
             f"border-color: {self.theme.accent}; color: #fff; }}"
         )
-        self.settings_btn.setToolTip("⚙ Settings  (HR thresholds / EMA)")
+        self.settings_btn.setToolTip(
+            "⚙ Settings  (left click)\n"
+            "ℹ About  (right click)")
         self.settings_btn.clicked.connect(self._open_settings)
+        self.settings_btn.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self.settings_btn.customContextMenuRequested.connect(
+            lambda _: self._show_about())
         row1.addWidget(self.settings_btn)
 
         # オーディオレベルメータ
@@ -3785,21 +3796,28 @@ class MainWindow(QtWidgets.QMainWindow):
         self._active_toasts.append(toast)
 
     def _rec_pulse_tick(self):
-        """REC ボタンを録画中に呼吸させる."""
+        """REC ボタンを録画中に呼吸 + 経過時間表示."""
         import math as _m
         if not self.recording:
             return
         self._rec_pulse_phase = (self._rec_pulse_phase + 0.15) % (2 * _m.pi)
         pulse = 0.55 + 0.45 * (0.5 + 0.5 * _m.sin(self._rec_pulse_phase))
-        # 赤色の透明度を脈動 + わずかに background 色も
         r = int(231 * pulse + 80 * (1 - pulse))
         g = int(76 * pulse + 20 * (1 - pulse))
         b = int(60 * pulse + 20 * (1 - pulse))
+        # 経過時間 mm:ss
+        try:
+            elapsed = max(0, int(time.time() - self.rec_start_time))
+        except Exception:
+            elapsed = 0
+        mm, ss = divmod(elapsed, 60)
+        self.rec_btn.setText(f"● REC  {mm:02d}:{ss:02d}")
         self.rec_btn.setStyleSheet(
             f"QPushButton {{ background-color: rgb({r},{g},{b}); "
             f"color: #ffffff; border: 1px solid rgb({r},{g},{b}); "
             "border-radius: 13px; padding: 3px 14px; "
-            "font-size: 11px; font-weight: 600; }}"
+            "font-size: 11px; font-weight: 600; "
+            "font-family: 'Consolas', monospace; }}"
         )
 
     def _key_num(self, n):
@@ -3832,10 +3850,53 @@ class MainWindow(QtWidgets.QMainWindow):
             if n in mode_map:
                 self._set_mode(mode_map[n])
 
+    def _audio_pulse_tick(self):
+        """Audio ON 中、ボタンに緩い呼吸 glow."""
+        import math as _m
+        if not getattr(self, "audio", None) or not self.audio.running:
+            return
+        self._audio_pulse_phase = (self._audio_pulse_phase + 0.08) % (2 * _m.pi)
+        # DropShadow 強度を呼吸させる
+        eff = self.audio_btn.graphicsEffect()
+        if not isinstance(eff, QtWidgets.QGraphicsDropShadowEffect):
+            eff = QtWidgets.QGraphicsDropShadowEffect(self.audio_btn)
+            self.audio_btn.setGraphicsEffect(eff)
+        pulse = 0.4 + 0.6 * (0.5 + 0.5 * _m.sin(self._audio_pulse_phase))
+        ar = QtGui.QColor(self.theme.accent).red()
+        ag = QtGui.QColor(self.theme.accent).green()
+        ab = QtGui.QColor(self.theme.accent).blue()
+        eff.setColor(QtGui.QColor(ar, ag, ab, int(220 * pulse)))
+        eff.setBlurRadius(12 + 14 * pulse)
+        eff.setOffset(0, 0)
+
     def _open_settings(self):
         dlg = _SettingsDialog(self, theme=self.theme)
         if dlg.exec_() == QtWidgets.QDialog.Accepted:
             self._show_toast("⚙ Settings applied")
+
+    def _show_about(self):
+        msg = QtWidgets.QMessageBox(self)
+        msg.setWindowTitle("About EEG Adaptive EQ")
+        msg.setTextFormat(QtCore.Qt.RichText)
+        msg.setText(
+            "<h2 style='color:%s'>🧠 EEG Adaptive EQ</h2>"
+            "<p style='color:#c0c0c0'>"
+            "Real-time EEG / PPG → adaptive EQ + immersive video.<br>"
+            "Built with PyQt5 + pedalboard + Muse S Athena."
+            "</p>"
+            "<p><b>Version:</b> 0.9.0 (MVP)<br>"
+            "<b>Author:</b> HIMEJI-HIRO<br>"
+            "<b>License:</b> MIT</p>"
+            "<p><a style='color:%s' "
+            "href='https://github.com/HIMEJI-HIRO/muse-emotion-eq'>"
+            "github.com/HIMEJI-HIRO/muse-emotion-eq</a></p>"
+            "<p style='color:#8a8a8a; font-size:10px;'>"
+            "Co-developed with Claude (Anthropic) in 2 weeks.<br>"
+            "Vital Sensing × Affective Computing × Audio.</p>"
+            % (self.theme.accent, self.theme.accent)
+        )
+        msg.setStandardButtons(QtWidgets.QMessageBox.Ok)
+        msg.exec_()
 
     def _show_help(self):
         """F1 で表示するキーボードショートカット一覧."""
@@ -4611,6 +4672,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.audio.stop()
             self.audio_btn.setText("♪ Audio OFF")
             self.audio_btn.setStyleSheet(self._audio_btn_style(False))
+            self.audio_btn.setGraphicsEffect(None)
             self.audio_status.setText("停止")
             self.audio_status.setStyleSheet(
                 "font-size: 11px; color: #8a8a8a; margin-left: 8px;")
@@ -4929,6 +4991,21 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.audio_level_meter.set_value(min(1.0, lvl * 3.0))
             except Exception:
                 pass
+
+        # ウィンドウタイトルにモード + サブビュー
+        try:
+            mode = getattr(self, "_mode", "studio")
+            mode_lbl = {"studio": "STUDIO", "listen": "LISTEN",
+                        "watch": "WATCH"}.get(mode, "?")
+            extra = ""
+            if mode == "watch" and getattr(self, "sea_widget", None) is not None:
+                sub = getattr(self.sea_widget, "_sub_view", "")
+                if sub:
+                    extra = f" · {sub.upper()}"
+            self.setWindowTitle(
+                f"[{mode_lbl}{extra}]  EEG Adaptive EQ — Muse S Athena")
+        except Exception:
+            pass
 
         # フッターステータスバー更新
         if hasattr(self, "_footer_mode"):

@@ -415,6 +415,8 @@ class SeaWidget(QWidget):
         self._uw_fading = False
         self._hr_ema = 60.0
         self._uw_last_switch = 0.0
+        self._flash_start = 0.0
+        self._flash_zone = ""
 
         # サブビュー切替ボタン (top-left, 半透明オーバーレイ)
         self._sub_btns_widget = QWidget(self)
@@ -601,6 +603,9 @@ class SeaWidget(QWidget):
                 self._uw_fade_start = now
                 self._uw_fading = True
                 self._uw_last_switch = now
+                # ゾーン跨ぎフラッシュトリガ
+                self._flash_start = now
+                self._flash_zone = want
 
     def _uw_fade_progress(self, now):
         if not self._uw_fading:
@@ -817,6 +822,28 @@ class SeaWidget(QWidget):
         vg.setColorAt(0.55, QColor(0, 0, 0, 0))
         vg.setColorAt(1.0, QColor(0, 0, 0, 110))
         qp.fillRect(QRectF(0, 0, w, h), vg)
+
+        # HR ゾーン跨ぎフラッシュ (1.2 秒で減衰)
+        if self._flash_start > 0:
+            elapsed = time.monotonic() - self._flash_start
+            if elapsed < 1.2:
+                t = 1.0 - (elapsed / 1.2)   # 1→0
+                flash_color = {"low": QColor(80, 180, 255),
+                                "mid": QColor(120, 240, 160),
+                                "high": QColor(255, 120, 180)}.get(
+                    self._flash_zone, QColor(255, 255, 255))
+                # 4辺に向かう glow vignette (内側透明 / 外側 flash)
+                flash_alpha = int(150 * t)
+                fg = QRadialGradient(QPointF(w * 0.5, h * 0.5),
+                                      max(w, h) * 0.7)
+                fg.setColorAt(0.4, QColor(flash_color.red(),
+                                            flash_color.green(),
+                                            flash_color.blue(), 0))
+                fg.setColorAt(1.0, QColor(flash_color.red(),
+                                            flash_color.green(),
+                                            flash_color.blue(),
+                                            flash_alpha))
+                qp.fillRect(QRectF(0, 0, w, h), fg)
 
         qp.end()
 
