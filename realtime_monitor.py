@@ -405,6 +405,7 @@ def _get_hover_popup(theme):
 
 class Card(QtWidgets.QFrame):
     expand_requested = QtCore.pyqtSignal(str)
+    swap_requested = QtCore.pyqtSignal(str, str)   # (src_id, dst_id)
 
     def __init__(self, title, content_widget, card_id, parent=None, theme=None,
                  accent_border=False):
@@ -415,6 +416,8 @@ class Card(QtWidgets.QFrame):
         self._accent_border = accent_border
         self._hover_title = ""
         self._hover_body = ""
+        self._drag_press_pos = None
+        self.setAcceptDrops(True)
         self.setObjectName("card")
         shadow = QtWidgets.QGraphicsDropShadowEffect(self)
         shadow.setBlurRadius(18)
@@ -510,6 +513,90 @@ class Card(QtWidgets.QFrame):
         popup = _get_hover_popup(self._theme)
         popup.hide()
         super().leaveEvent(event)
+
+    # ---- ドラッグ＆ドロップで並び替え (タイトル部分でのみドラッグ開始) ----
+    def _in_title_area(self, pos):
+        # タイトルバー領域 (上 36px) でドラッグ開始可
+        return pos.y() <= 36 and pos.x() < self.width() - 40
+
+    def mousePressEvent(self, event):
+        if (event.button() == QtCore.Qt.LeftButton
+                and self._in_title_area(event.pos())
+                and not self.is_expanded):
+            self._drag_press_pos = event.pos()
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if (self._drag_press_pos is not None
+                and (event.buttons() & QtCore.Qt.LeftButton)):
+            dist = (event.pos() - self._drag_press_pos).manhattanLength()
+            if dist > QtWidgets.QApplication.startDragDistance():
+                self._start_drag()
+                self._drag_press_pos = None
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        self._drag_press_pos = None
+        super().mouseReleaseEvent(event)
+
+    def _start_drag(self):
+        drag = QtGui.QDrag(self)
+        mime = QtCore.QMimeData()
+        mime.setText(f"card:{self.card_id}")
+        drag.setMimeData(mime)
+        # プレビュー pixmap
+        pix = self.grab()
+        scaled = pix.scaled(220, 130,
+                            QtCore.Qt.KeepAspectRatio,
+                            QtCore.Qt.SmoothTransformation)
+        # 半透明にする
+        out = QtGui.QPixmap(scaled.size())
+        out.fill(QtCore.Qt.transparent)
+        p = QtGui.QPainter(out)
+        p.setOpacity(0.75)
+        p.drawPixmap(0, 0, scaled)
+        p.end()
+        drag.setPixmap(out)
+        drag.setHotSpot(QtCore.QPoint(out.width() // 2, 16))
+        drag.exec_(QtCore.Qt.MoveAction)
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasText() and event.mimeData().text().startswith("card:"):
+            event.acceptProposedAction()
+            # ハイライト (一時的に accent ボーダー太く)
+            self._set_drop_highlight(True)
+        else:
+            event.ignore()
+
+    def dragLeaveEvent(self, event):
+        self._set_drop_highlight(False)
+        super().dragLeaveEvent(event)
+
+    def dropEvent(self, event):
+        self._set_drop_highlight(False)
+        text = event.mimeData().text()
+        if not text.startswith("card:"):
+            event.ignore()
+            return
+        src_id = text[len("card:"):]
+        if src_id == self.card_id:
+            event.ignore()
+            return
+        self.swap_requested.emit(src_id, self.card_id)
+        event.acceptProposedAction()
+
+    def _set_drop_highlight(self, on):
+        t = self._theme
+        accent = t.accent if t else "#1abc9c"
+        bg_panel = t.bg_panel if t else "#1f1f21"
+        if on:
+            self.setStyleSheet(
+                f"QFrame#card {{ background-color: {bg_panel}; "
+                f"border: 3px dashed {accent}; border-radius: 12px; }}"
+                "QLabel { border: none; }"
+            )
+        else:
+            self._apply_theme()
 
 
 class _StatusMeter(QtWidgets.QWidget):
@@ -2522,6 +2609,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         for c in self.cards.values():
             c.expand_requested.connect(self.toggle_focus)
+            c.swap_requested.connect(self._swap_cards)
 
         for cid, pos in self.card_positions.items():
             if len(pos) == 4:
@@ -2706,6 +2794,34 @@ class MainWindow(QtWidgets.QMainWindow):
     def _restore_if_focused(self):
         if self.focused_card is not None:
             self._restore_grid()
+
+    def _swap_cards(self, src_id, dst_id):
+        """2 つのカードの grid 上の位置を入れ替える."""
+        if src_id == dst_id:
+            return
+        if src_id not in self.card_positions or dst_id not in self.card_positions:
+            return
+        src_pos = self.card_positions[src_id]
+        dst_pos = self.card_positions[dst_id]
+        src_card = self.cards[src_id]
+        dst_card = self.cards[dst_id]
+        # 一度両方とも grid から外す
+        self.grid_layout.removeWidget(src_card)
+        self.grid_layout.removeWidget(dst_card)
+        # ポジション入れ替え
+        self.card_positions[src_id] = dst_pos
+        self.card_positions[dst_id] = src_pos
+        # 再配置
+        def _add(card, pos):
+            if len(pos) == 4:
+                r, c, rs, cs = pos
+                self.grid_layout.addWidget(card, r, c, rs, cs)
+            else:
+                r, c = pos
+                self.grid_layout.addWidget(card, r, c)
+        _add(src_card, dst_pos)
+        _add(dst_card, src_pos)
+        self._show_toast(f"⇄ Swapped: {src_id} ↔ {dst_id}")
 
     # --- パーツ ---
     def _build_header(self):
