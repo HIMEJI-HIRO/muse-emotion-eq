@@ -43,8 +43,8 @@ OUTPUT_KEYWORDS = [
 # 出力候補から除外すべきループバック系キーワード
 OUTPUT_EXCLUDE = ["CABLE", "VB-Audio", "VoiceMeeter", "Virtual"]
 
-GAIN_MIN_DB = -4.0
-GAIN_MAX_DB = 4.0
+GAIN_MIN_DB = -6.0
+GAIN_MAX_DB = 6.0
 
 # ---- 6 バンド定義 (UI とも共有する) -------------------------------------
 # (key, emoji, label, freq_hz, filter_kind, q, blurb)
@@ -257,6 +257,66 @@ class AudioEngine:
         """直近の出力 RMS ピーク (0..1). UI のレベルメータ用."""
         return getattr(self, "_last_level", 0.0)
 
+    # --- スペクトル可視化 (出力 FFT) ---
+    _SPEC_BUF_SIZE = 2048   # FFT 窓
+    _SPEC_RECALC_INTERVAL = 0.08   # ~12Hz 更新
+
+    def _spec_init(self):
+        if not hasattr(self, "_spec_buf"):
+            self._spec_buf = np.zeros(self._SPEC_BUF_SIZE, dtype=np.float32)
+            self._spec_pos = 0
+            self._spec_cache = None
+            self._spec_last_calc = 0.0
+
+    def _spec_push(self, samples):
+        self._spec_init()
+        if samples.ndim > 1:
+            mono = samples.mean(axis=1)
+        else:
+            mono = samples
+        n = len(mono)
+        bn = self._SPEC_BUF_SIZE
+        if n >= bn:
+            self._spec_buf[:] = mono[-bn:]
+            self._spec_pos = 0
+        else:
+            end = self._spec_pos + n
+            if end <= bn:
+                self._spec_buf[self._spec_pos:end] = mono
+            else:
+                wrap = end - bn
+                self._spec_buf[self._spec_pos:] = mono[:n - wrap]
+                self._spec_buf[:wrap] = mono[-wrap:]
+            self._spec_pos = end % bn
+
+    def get_output_spectrum(self, n_bins=24, f_lo=50.0, f_hi=20000.0):
+        """log 周波数 n_bins ぶんの 0..1 正規化マグニチュード."""
+        self._spec_init()
+        import time as _t
+        now = _t.time()
+        if (self._spec_cache is not None
+                and (now - self._spec_last_calc)
+                < self._SPEC_RECALC_INTERVAL):
+            return self._spec_cache
+        # ring buffer 平坦化 (latest が末尾)
+        buf = np.concatenate([self._spec_buf[self._spec_pos:],
+                               self._spec_buf[:self._spec_pos]])
+        win = np.hanning(len(buf)).astype(np.float32)
+        spec = np.abs(np.fft.rfft(buf * win))
+        freqs = np.fft.rfftfreq(len(buf), 1.0 / self.sample_rate)
+        bins = np.logspace(np.log10(f_lo), np.log10(f_hi), n_bins + 1)
+        out = np.zeros(n_bins, dtype=np.float32)
+        for i in range(n_bins):
+            mask = (freqs >= bins[i]) & (freqs < bins[i + 1])
+            if mask.any():
+                out[i] = float(spec[mask].mean())
+        # dB 化 + 正規化 (-60dB..0dB → 0..1)
+        out_db = 20.0 * np.log10(out + 1e-9)
+        out_norm = np.clip((out_db + 60.0) / 60.0, 0.0, 1.0)
+        self._spec_cache = out_norm
+        self._spec_last_calc = now
+        return out_norm
+
     def set_master_volume(self, percent):
         """マスター音量 (0..150%). 100%=0dB, 0%=-inf (簡易には -40dB)."""
         if not HAS_AUDIO or not hasattr(self, "_master_gain"):
@@ -301,9 +361,10 @@ class AudioEngine:
         try:
             seg = outdata[:n, :c]
             rms = float(np.sqrt(np.mean(seg * seg)))
-            # 簡易ピーク追従 + 緩い減衰
             prev = getattr(self, "_last_level", 0.0)
             self._last_level = max(rms * 1.4, prev * 0.92)
+            # スペクトル用ring buffer 蓄積 (slice 代入なので copy 不要)
+            self._spec_push(seg)
         except Exception:
             pass
 

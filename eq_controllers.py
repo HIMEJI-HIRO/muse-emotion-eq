@@ -45,7 +45,7 @@ class ReflectController:
       Valence  → Reverb wet (快 = 広く空間的)
     """
 
-    def __init__(self, audio, gain_max_db=4.0, alpha=ALPHA_DEFAULT,
+    def __init__(self, audio, gain_max_db=6.0, alpha=ALPHA_DEFAULT,
                  push_interval=PUSH_MIN_INTERVAL_SEC):
         self.audio = audio
         self.gain_max = gain_max_db

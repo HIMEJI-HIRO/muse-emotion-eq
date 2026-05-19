@@ -596,6 +596,59 @@ class Card(QtWidgets.QFrame):
             self._apply_theme()
 
 
+class _OutputSpectrumBar(QtWidgets.QWidget):
+    """audio_engine の出力 FFT を視覚化する小型バー.
+    EQ 設定変化を**目で確認**するためのデバッグ的可視化."""
+
+    def __init__(self, n_bins=22, parent=None):
+        super().__init__(parent)
+        self._n_bins = n_bins
+        self._values = [0.0] * n_bins
+        self._accent = QtGui.QColor("#1abc9c")
+        self.setMinimumWidth(180)
+        self.setMaximumWidth(240)
+        self.setFixedHeight(24)
+        self.setToolTip(
+            "Audio output spectrum (log-frequency 50Hz–20kHz)\n"
+            "EQ 操作で帯域の高さが変化する")
+
+    def set_values(self, vals):
+        if len(vals) != self._n_bins:
+            return
+        # 簡易減衰 (フォール感)
+        for i, v in enumerate(vals):
+            cur = self._values[i]
+            self._values[i] = max(float(v), cur * 0.88)
+        self.update()
+
+    def set_accent(self, hex_color):
+        self._accent = QtGui.QColor(hex_color)
+        self.update()
+
+    def paintEvent(self, event):
+        qp = QtGui.QPainter(self)
+        qp.setRenderHint(QtGui.QPainter.Antialiasing, True)
+        w = self.width()
+        h = self.height()
+        # 背景
+        qp.setPen(QtCore.Qt.NoPen)
+        qp.setBrush(QtGui.QColor(255, 255, 255, 18))
+        qp.drawRoundedRect(0, 0, w, h, 3, 3)
+        n = self._n_bins
+        gap = 1
+        bw = (w - gap * (n - 1)) / n
+        a = self._accent
+        for i, v in enumerate(self._values):
+            x = i * (bw + gap)
+            bh = max(1.5, v * (h - 2))
+            y = h - bh - 1
+            col = QtGui.QColor(a.red(), a.green(), a.blue(),
+                                int(120 + 135 * v))
+            qp.setBrush(col)
+            qp.drawRoundedRect(QtCore.QRectF(x, y, bw, bh), 1.0, 1.0)
+        qp.end()
+
+
 class _StatusMeter(QtWidgets.QWidget):
     """Watch status bar 用の段ブロックメータ. value(0..1) で本数増える."""
 
@@ -912,6 +965,115 @@ class _Toast(QtWidgets.QFrame):
             anim.start(QtCore.QAbstractAnimation.DeleteWhenStopped)
         except Exception:
             self.deleteLater()
+
+
+class _BigControlPanel(QtWidgets.QDialog):
+    """ヘッダクリックで開く大型操作パネル.
+    モード切替 / Audio / REC / Volume / Spectrum を 1.8倍 サイズで表示."""
+
+    def __init__(self, main_window):
+        super().__init__(main_window)
+        self.setWindowFlags(QtCore.Qt.Dialog | QtCore.Qt.FramelessWindowHint
+                            | QtCore.Qt.WindowStaysOnTopHint)
+        self.setAttribute(QtCore.Qt.WA_TranslucentBackground, False)
+        self._mw = main_window
+        self.setFixedSize(720, 180)
+        accent = main_window.theme.accent
+
+        # 中央
+        scr = QtWidgets.QApplication.primaryScreen().availableGeometry()
+        self.move(scr.center().x() - self.width() // 2,
+                  scr.center().y() - self.height() // 2)
+
+        outer = QtWidgets.QVBoxLayout(self)
+        outer.setContentsMargins(20, 16, 20, 16)
+        outer.setSpacing(10)
+
+        # row 1: モード 3 ボタン
+        mode_row = QtWidgets.QHBoxLayout()
+        mode_row.setSpacing(10)
+        self._mode_btns = []
+        for key, label in [("studio", "🧠 STUDIO"),
+                           ("listen", "🎚 LISTEN"),
+                           ("watch", "🌊 WATCH")]:
+            b = QtWidgets.QPushButton(label)
+            b.setFixedHeight(46)
+            b.setCursor(QtCore.Qt.PointingHandCursor)
+            b.clicked.connect(lambda _, k=key: self._mw._set_mode(k))
+            mode_row.addWidget(b)
+            self._mode_btns.append(b)
+        outer.addLayout(mode_row)
+
+        # row 2: Audio + REC + Replay + Volume + Close
+        action_row = QtWidgets.QHBoxLayout()
+        action_row.setSpacing(10)
+
+        self.audio_btn = QtWidgets.QPushButton("♪ Audio")
+        self.audio_btn.setFixedHeight(40)
+        self.audio_btn.setCursor(QtCore.Qt.PointingHandCursor)
+        self.audio_btn.clicked.connect(self._mw._toggle_audio)
+        action_row.addWidget(self.audio_btn)
+
+        self.rec_btn = QtWidgets.QPushButton("● REC")
+        self.rec_btn.setFixedHeight(40)
+        self.rec_btn.setCursor(QtCore.Qt.PointingHandCursor)
+        self.rec_btn.clicked.connect(self._mw._toggle_recording)
+        action_row.addWidget(self.rec_btn)
+
+        vol_lbl = QtWidgets.QLabel("🔊")
+        vol_lbl.setStyleSheet("font-size: 18px; color: #c0c0c0;")
+        action_row.addWidget(vol_lbl)
+        self.volume = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        self.volume.setRange(0, 150)
+        self.volume.setValue(main_window.volume_slider.value()
+                              if hasattr(main_window, "volume_slider")
+                              else 100)
+        self.volume.setFixedHeight(28)
+        self.volume.valueChanged.connect(self._on_volume)
+        action_row.addWidget(self.volume, 1)
+        self.vol_val = QtWidgets.QLabel("100%")
+        self.vol_val.setStyleSheet(
+            "color: #f0f0f0; font-family: 'Consolas', monospace; "
+            "font-size: 14px; min-width: 50px;")
+        action_row.addWidget(self.vol_val)
+
+        close_btn = QtWidgets.QPushButton("✕")
+        close_btn.setFixedSize(40, 40)
+        close_btn.setCursor(QtCore.Qt.PointingHandCursor)
+        close_btn.clicked.connect(self.close)
+        action_row.addWidget(close_btn)
+        outer.addLayout(action_row)
+
+        # スタイル
+        ar = QtGui.QColor(accent).red()
+        ag = QtGui.QColor(accent).green()
+        ab = QtGui.QColor(accent).blue()
+        self.setStyleSheet(
+            f"_BigControlPanel {{ background-color: #0a0a10; "
+            f"border: 2px solid {accent}; border-radius: 14px; }}"
+            "QPushButton { background-color: #1e1e22; color: #d0d0d0; "
+            f"border: 1px solid {accent}; border-radius: 10px; "
+            "font-size: 14px; font-weight: bold; "
+            "letter-spacing: 1.5px; padding: 4px 16px; }"
+            f"QPushButton:hover {{ background-color: {accent}; "
+            "color: #000000; }"
+            "QSlider::groove:horizontal { background: #2a2a2c; "
+            "height: 6px; border-radius: 3px; }"
+            f"QSlider::sub-page:horizontal {{ background: {accent}; "
+            "border-radius: 3px; }}"
+            f"QSlider::handle:horizontal {{ background: {accent}; "
+            "width: 18px; border-radius: 9px; "
+            "margin-top: -6px; margin-bottom: -6px; }}"
+        )
+        # Esc で閉じる
+        QtWidgets.QShortcut(QtGui.QKeySequence("Esc"), self,
+                            activated=self.close)
+
+    def _on_volume(self, val):
+        self.vol_val.setText(f"{int(val)}%")
+        if hasattr(self._mw, "volume_slider"):
+            # 元のスライダにも反映 (signal で audio engine も更新)
+            self._mw.volume_slider.setValue(val)
 
 
 class SplashScreen(QtWidgets.QWidget):
@@ -1279,7 +1441,7 @@ class _MatrixRain(QtWidgets.QWidget):
         self._h = 0
         self._timer = QtCore.QTimer(self)
         self._timer.timeout.connect(self._tick)
-        self._timer.start(60)   # ~16fps 軽量
+        self._timer.start(100)   # 10fps 軽量化
         self._last_tick = time.time()
         self._initialized = False
 
@@ -1309,6 +1471,8 @@ class _MatrixRain(QtWidgets.QWidget):
         super().resizeEvent(event)
 
     def _tick(self):
+        if not self.isVisible():
+            return
         import random as _r
         if not self._initialized and self._w > 0:
             self._init_columns()
@@ -1368,6 +1532,8 @@ class _TronGrid(QtWidgets.QWidget):
         self._accent = QtGui.QColor(hex_color)
 
     def _tick(self):
+        if not self.isVisible():
+            return
         self._phase = (self._phase + 0.5) % 40.0
         self.update()
 
@@ -1461,7 +1627,7 @@ class _MandalaOverlay(QtWidgets.QWidget):
         self._accent = QtGui.QColor(220, 240, 255)
         self._opacity = 0.55
         self._eq_vals = {}
-        self._eq_gain_max = 4.0
+        self._eq_gain_max = 6.0
         # 球面点群 (Fibonacci, 約120点で軽め)
         self._n_points = 120
         self._pts_3d = _fibonacci_sphere(self._n_points)
@@ -1471,7 +1637,7 @@ class _MandalaOverlay(QtWidgets.QWidget):
         self._timer.start(50)   # 20fps (軽量化)
         self._last_tick = time.time()
 
-    def set_eq_values(self, eq_dict, gain_max=4.0):
+    def set_eq_values(self, eq_dict, gain_max=6.0):
         self._eq_vals = dict(eq_dict)
         self._eq_gain_max = gain_max
 
@@ -1483,6 +1649,8 @@ class _MandalaOverlay(QtWidgets.QWidget):
         self._pulse_bpm = float(bpm) if (bpm and bpm > 20) else 0.0
 
     def _tick(self):
+        if not self.isVisible():
+            return
         import math as _m
         now = time.time()
         dt = now - self._last_tick
@@ -1772,7 +1940,7 @@ class _BrainWave(QtWidgets.QWidget):
         self.setMinimumWidth(80)
         self._timer = QtCore.QTimer(self)
         self._timer.timeout.connect(self._advance)
-        self._timer.start(50)
+        self._timer.start(80)   # 軽量化
 
     def set_value(self, v):
         v = max(0.0, min(1.0, float(v)))
@@ -1782,9 +1950,10 @@ class _BrainWave(QtWidgets.QWidget):
         self.update()
 
     def _advance(self):
+        if not self.isVisible():
+            return
         import math as _m
-        # 値が大きいほど速く流れる
-        speed = 0.05 + self._value * 0.20
+        speed = 0.07 + self._value * 0.25
         self._phase = (self._phase + speed) % (2 * _m.pi * 1000)
         self.update()
 
@@ -1850,11 +2019,13 @@ class _RussellPad(QtWidgets.QWidget):
         self.setMinimumSize(220, 220)
         self._timer = QtCore.QTimer(self)
         self._timer.timeout.connect(self._tick)
-        self._timer.start(60)
+        self._timer.start(100)   # 軽量化
 
     def _tick(self):
+        if not self.isVisible():
+            return
         import math as _m
-        self._pulse_phase = (self._pulse_phase + 0.08) % (2 * _m.pi)
+        self._pulse_phase = (self._pulse_phase + 0.13) % (2 * _m.pi)
         self.update()
 
     def set_position(self, valence, arousal):
@@ -2056,6 +2227,8 @@ class _ParticleEEG(QtWidgets.QWidget):
         return y_center - max(-80, min(80, float(val))) / 80.0 * y_amp
 
     def _tick(self):
+        if not self.isVisible():
+            return
         import random as _r
         now = time.time()
         dt = max(0.001, now - self._last_tick)
@@ -2191,11 +2364,13 @@ class _BandSphere(QtWidgets.QWidget):
         self.setMinimumSize(110, 130)
         self._timer = QtCore.QTimer(self)
         self._timer.timeout.connect(self._tick)
-        self._timer.start(60)
+        self._timer.start(100)   # 軽量化: 60→100ms
 
     def _tick(self):
+        if not self.isVisible():
+            return
         import math as _m
-        self._phase = (self._phase + 0.06) % (2 * _m.pi)
+        self._phase = (self._phase + 0.10) % (2 * _m.pi)
         self.update()
 
     def set_value(self, normalized, raw=None):
@@ -2379,7 +2554,7 @@ class _InstrumentCircle(QtWidgets.QWidget):
         self.emoji = emoji
         self.name = name
         self._value_db = 0.0
-        self._gain_max = 4.0
+        self._gain_max = 6.0
         self._accent = QtGui.QColor("#1abc9c")
         self._text_dim = QtGui.QColor("#8a8a8a")
         self._phase = 0.0
@@ -2395,11 +2570,13 @@ class _InstrumentCircle(QtWidgets.QWidget):
                 self._texture = img
         self._timer = QtCore.QTimer(self)
         self._timer.timeout.connect(self._tick)
-        self._timer.start(60)
+        self._timer.start(100)   # 軽量化
 
     def _tick(self):
+        if not self.isVisible():
+            return
         import math as _m
-        self._phase = (self._phase + 0.08) % (2 * _m.pi)
+        self._phase = (self._phase + 0.13) % (2 * _m.pi)
         self.update()
 
     def set_accent(self, color_hex):
@@ -2529,7 +2706,7 @@ class _RibbonBar(QtWidgets.QWidget):
         self._phase = 0.0
         self._timer = QtCore.QTimer(self)
         self._timer.timeout.connect(self._tick)
-        self._timer.start(50)
+        self._timer.start(80)   # 軽量化
 
     def set_value(self, v):
         v = max(0.0, min(1.0, float(v)))
@@ -2538,8 +2715,10 @@ class _RibbonBar(QtWidgets.QWidget):
         self._value = v
 
     def _tick(self):
+        if not self.isVisible():
+            return
         import math as _m
-        self._phase = (self._phase + 0.08) % (2 * _m.pi * 100)
+        self._phase = (self._phase + 0.18) % (2 * _m.pi * 100)
         self.update()
 
     def paintEvent(self, event):
@@ -3217,6 +3396,21 @@ class MainWindow(QtWidgets.QMainWindow):
         self.rec_btn.setToolTip("クリックで録画開始 / 停止")
         row1.addWidget(self.rec_btn)
 
+        # 大型コントロールパネル (↕)
+        self.big_panel_btn = QtWidgets.QPushButton("↕")
+        self.big_panel_btn.setCursor(QtCore.Qt.PointingHandCursor)
+        self.big_panel_btn.setFixedSize(28, 28)
+        self.big_panel_btn.setStyleSheet(
+            "QPushButton { background-color: transparent; color: #c0c0c0; "
+            "border: 1px solid #3a3a3a; border-radius: 14px; "
+            "font-size: 14px; font-weight: bold; }"
+            f"QPushButton:hover {{ background-color: {self.theme.accent}; "
+            f"border-color: {self.theme.accent}; color: #ffffff; }}"
+        )
+        self.big_panel_btn.setToolTip("Open large control panel")
+        self.big_panel_btn.clicked.connect(self._open_big_panel)
+        row1.addWidget(self.big_panel_btn)
+
         # 設定ボタン (歯車)
         self.settings_btn = QtWidgets.QPushButton("⚙")
         self.settings_btn.setCursor(QtCore.Qt.PointingHandCursor)
@@ -3225,11 +3419,8 @@ class MainWindow(QtWidgets.QMainWindow):
             "QPushButton { background-color: transparent; color: #c0c0c0; "
             "border: 1px solid #3a3a3a; border-radius: 14px; "
             "font-size: 14px; }"
-            f"QPushButton:hover {{ background-color: rgba("
-            f"{QtGui.QColor(self.theme.accent).red()},"
-            f"{QtGui.QColor(self.theme.accent).green()},"
-            f"{QtGui.QColor(self.theme.accent).blue()},60); "
-            f"border-color: {self.theme.accent}; color: #fff; }}"
+            f"QPushButton:hover {{ background-color: {self.theme.accent}; "
+            f"border-color: {self.theme.accent}; color: #ffffff; }}"
         )
         self.settings_btn.setToolTip(
             "⚙ Settings  (left click)\n"
@@ -3257,8 +3448,8 @@ class MainWindow(QtWidgets.QMainWindow):
             f"QSlider::sub-page:horizontal {{ background: {accent_hex}; "
             "border-radius: 2px; }}"
             f"QSlider::handle:horizontal {{ background: {accent_hex}; "
-            "width: 12px; border-radius: 6px; "
-            "margin: -6px 0; }}"
+            "width: 14px; height: 14px; border-radius: 7px; "
+            "margin-top: -5px; margin-bottom: -5px; }}"
         )
         self.volume_slider.valueChanged.connect(self._on_volume_changed)
         self.volume_slider.setToolTip("Master volume (0–150%)")
@@ -3272,11 +3463,16 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # オーディオレベルメータ
         self.audio_level_meter = _StatusMeter()
-        self.audio_level_meter.setFixedWidth(100)
+        self.audio_level_meter.setFixedWidth(80)
         self.audio_level_meter.setFixedHeight(20)
         self.audio_level_meter.set_accent(self.theme.accent)
         self.audio_level_meter.setToolTip("Audio output RMS level")
         row1.addWidget(self.audio_level_meter)
+
+        # 出力スペクトル (EQ 効果が目で見える)
+        self.audio_spectrum_bar = _OutputSpectrumBar()
+        self.audio_spectrum_bar.set_accent(self.theme.accent)
+        row1.addWidget(self.audio_spectrum_bar)
 
         # ストリーミングインジケータ
         self.status_label = QtWidgets.QLabel("● Connecting...")
@@ -3899,13 +4095,16 @@ class MainWindow(QtWidgets.QMainWindow):
         # --- row4: プリセット (楽器別) ---
         preset_defs = [
             ("Flat",          "⚪",  {}, 0.0),
-            ("ボーカル前面",    "🎤",  {"vocal": 2.5, "mid": 1.0, "bass": -0.5},
-                                 0.2),
-            ("ドラム重視",     "🥁",  {"drums": 2.5, "bass": 1.5}, 0.2),
-            ("ハイ楽器輝き",    "🎺",  {"high": 2.8, "vocal": 1.2}, 0.3),
-            ("空間広く",       "🌌",  {"air": 2.0, "mid": 0.5}, 0.7),
-            ("バンド強調",     "🎸",  {"drums": 1.5, "bass": 2.0, "mid": 1.5,
-                                      "vocal": 1.2}, 0.3),
+            ("ボーカル前面",    "🎤",  {"vocal": 4.5, "mid": 2.0,
+                                       "bass": -1.5}, 0.25),
+            ("ドラム重視",     "🥁",  {"drums": 4.5, "bass": 3.0,
+                                       "high": -1.5}, 0.2),
+            ("ハイ楽器輝き",    "🎺",  {"high": 4.5, "vocal": 2.5,
+                                       "bass": -1.5}, 0.35),
+            ("空間広く",       "🌌",  {"air": 4.5, "mid": 1.5,
+                                       "drums": -1.0}, 0.75),
+            ("バンド強調",     "🎸",  {"drums": 3.0, "bass": 4.0,
+                                      "mid": 3.0, "vocal": 2.5}, 0.3),
         ]
         preset_row = QtWidgets.QHBoxLayout()
         preset_row.setSpacing(6)
@@ -4213,6 +4412,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self._watch_matrix.set_accent(self.theme.accent)
         if hasattr(self, "_watch_cursor_particles"):
             self._watch_cursor_particles.set_accent(self.theme.accent)
+        if hasattr(self, "audio_spectrum_bar"):
+            self.audio_spectrum_bar.set_accent(self.theme.accent)
         # ヘッダ neon border + title glow を accent 色に
         if hasattr(self, "_header_frame"):
             self._restyle_header(self._header_frame)
@@ -4532,6 +4733,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.volume_label.setText("🔉")
             else:
                 self.volume_label.setText("🔊")
+
+    def _open_big_panel(self):
+        dlg = _BigControlPanel(self)
+        dlg.exec_()
 
     def _open_settings(self):
         dlg = _SettingsDialog(self, theme=self.theme)
@@ -4920,13 +5125,16 @@ class MainWindow(QtWidgets.QMainWindow):
         outer.addWidget(preset_title)
         preset_defs = [
             ("Flat",       "⚪", {}, 0.0),
-            ("Vocal",      "🎤", {"vocal": 2.5, "mid": 1.0,
-                                  "bass": -0.5}, 0.2),
-            ("Drums",      "🥁", {"drums": 2.5, "bass": 1.5}, 0.2),
-            ("High",       "🎺", {"high": 2.8, "vocal": 1.2}, 0.3),
-            ("Spatial",    "🌌", {"air": 2.0, "mid": 0.5}, 0.7),
-            ("Band",       "🎸", {"drums": 1.5, "bass": 2.0,
-                                  "mid": 1.5, "vocal": 1.2}, 0.3),
+            ("Vocal",      "🎤", {"vocal": 4.5, "mid": 2.0,
+                                  "bass": -1.5}, 0.25),
+            ("Drums",      "🥁", {"drums": 4.5, "bass": 3.0,
+                                  "high": -1.5}, 0.2),
+            ("High",       "🎺", {"high": 4.5, "vocal": 2.5,
+                                  "bass": -1.5}, 0.35),
+            ("Spatial",    "🌌", {"air": 4.5, "mid": 1.5,
+                                  "drums": -1.0}, 0.75),
+            ("Band",       "🎸", {"drums": 3.0, "bass": 4.0,
+                                  "mid": 3.0, "vocal": 2.5}, 0.3),
         ]
         preset_row = QtWidgets.QHBoxLayout()
         preset_row.setSpacing(8)
@@ -5676,8 +5884,15 @@ class MainWindow(QtWidgets.QMainWindow):
         if hasattr(self, "audio_level_meter"):
             try:
                 lvl = float(self.audio.get_output_level())
-                # 0..1 にクランプ + 強調 (ピーク見やすく)
                 self.audio_level_meter.set_value(min(1.0, lvl * 3.0))
+            except Exception:
+                pass
+
+        # 出力スペクトル更新
+        if hasattr(self, "audio_spectrum_bar"):
+            try:
+                spec = self.audio.get_output_spectrum(n_bins=22)
+                self.audio_spectrum_bar.set_values(list(spec))
             except Exception:
                 pass
 

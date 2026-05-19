@@ -797,7 +797,7 @@ class InstrumentFader(QtWidgets.QWidget):
     value_changed = QtCore.pyqtSignal(str, float)   # key, db
 
     def __init__(self, theme, key, emoji, name, freq_hz,
-                 gain_max=4.0, blurb="", parent=None):
+                 gain_max=6.0, blurb="", parent=None):
         super().__init__(parent)
         self.theme = theme
         self.key = key
@@ -1044,7 +1044,7 @@ class InstrumentFaderBank(QtWidgets.QWidget):
 
     band_changed = QtCore.pyqtSignal(str, float)
 
-    def __init__(self, theme, bands, gain_max=4.0, parent=None):
+    def __init__(self, theme, bands, gain_max=6.0, parent=None):
         super().__init__(parent)
         self.theme = theme
         self.gain_max = gain_max
