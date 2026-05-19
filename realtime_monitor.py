@@ -25,12 +25,6 @@ from pythonosc import dispatcher, osc_server
 from PyQt5 import QtCore, QtGui, QtWidgets
 import pyqtgraph as pg
 
-try:
-    import pywt
-    HAS_PYWT = True
-except ImportError:
-    HAS_PYWT = False
-
 from audio_engine import AudioEngine, HAS_AUDIO
 from theme import (ThemeManager, THEMES, BG_PALETTES, BG_DEEP, BG_PANEL,
                    BG_CARD, BORDER, TEXT_MAIN, TEXT_DIM, TEXT_FAINT)
@@ -2475,76 +2469,6 @@ class _BandSphere(QtWidgets.QWidget):
         qp.end()
 
 
-class _BandGauge(QtWidgets.QWidget):
-    """1バンドの半円ゲージ. label + arc fill + value text."""
-
-    def __init__(self, label, color_hex, parent=None):
-        super().__init__(parent)
-        self.label = label
-        self._color = QtGui.QColor(color_hex)
-        self._value = 0.0   # 0..1
-        self._raw = 0.0     # 表示用の元値
-        self.setMinimumSize(70, 86)
-
-    def set_value(self, normalized, raw=None):
-        v = max(0.0, min(1.0, float(normalized)))
-        if abs(v - self._value) < 0.005 and raw is None:
-            return
-        self._value = v
-        if raw is not None:
-            self._raw = raw
-        self.update()
-
-    def paintEvent(self, event):
-        qp = QtGui.QPainter(self)
-        qp.setRenderHint(QtGui.QPainter.Antialiasing, True)
-        w = self.width()
-        h = self.height()
-        # 半円の中心と半径
-        cx = w / 2
-        cy = h - 22
-        radius = min(w * 0.45, h - 38)
-        # track
-        thickness = 7
-        track_pen = QtGui.QPen(QtGui.QColor(255, 255, 255, 28), thickness)
-        track_pen.setCapStyle(QtCore.Qt.RoundCap)
-        qp.setPen(track_pen)
-        rect = QtCore.QRectF(cx - radius, cy - radius,
-                             radius * 2, radius * 2)
-        # 半円: 180度 (Qt は startAngle * 16, spanAngle * 16)
-        qp.drawArc(rect, 180 * 16, -180 * 16)
-        # fill
-        if self._value > 0.001:
-            grad = QtGui.QConicalGradient(cx, cy, 180)
-            grad.setColorAt(0.0, self._color)
-            bright = QtGui.QColor(self._color)
-            bright.setHsv(self._color.hue(),
-                          max(0, self._color.saturation() - 60),
-                          min(255, self._color.value() + 50))
-            grad.setColorAt(0.5, bright)
-            fill_pen = QtGui.QPen(QtGui.QBrush(grad), thickness)
-            fill_pen.setCapStyle(QtCore.Qt.RoundCap)
-            qp.setPen(fill_pen)
-            qp.drawArc(rect, 180 * 16, int(-180 * 16 * self._value))
-        # value text (中央)
-        val_font = QtGui.QFont("Consolas")
-        val_font.setPointSize(10)
-        val_font.setBold(True)
-        qp.setFont(val_font)
-        qp.setPen(QtGui.QColor(240, 240, 240))
-        qp.drawText(QtCore.QRectF(cx - radius, cy - 18, radius * 2, 18),
-                    QtCore.Qt.AlignCenter, f"{self._raw:.2f}")
-        # label (下)
-        lbl_font = QtGui.QFont()
-        lbl_font.setPointSize(13)
-        lbl_font.setBold(True)
-        qp.setFont(lbl_font)
-        qp.setPen(self._color)
-        qp.drawText(QtCore.QRectF(0, h - 22, w, 18),
-                    QtCore.Qt.AlignCenter, self.label)
-        qp.end()
-
-
 class _InstrumentCircle(QtWidgets.QWidget):
     """楽器ごとの円形 EQ 表示. ネオンリング + 絵文字 + dB 値."""
 
@@ -2830,36 +2754,6 @@ class _HudBar(QtWidgets.QWidget):
         qp.end()
 
 
-class _ScanlineOverlay(QtWidgets.QWidget):
-    """画面全体を覆う薄い走査線オーバーレイ (CRT 風)."""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents, True)
-        self.setAttribute(QtCore.Qt.WA_NoSystemBackground, True)
-        self.setAttribute(QtCore.Qt.WA_TranslucentBackground, True)
-        self._phase = 0
-
-    def paintEvent(self, event):
-        qp = QtGui.QPainter(self)
-        qp.setPen(QtCore.Qt.NoPen)
-        line_color = QtGui.QColor(255, 255, 255, 8)
-        qp.setBrush(line_color)
-        h = self.height()
-        for y in range(0, h, 3):
-            qp.drawRect(0, y, self.width(), 1)
-        # 1本のブライト走査線が下に流れる
-        bright_y = (self._phase % max(1, h))
-        bright = QtGui.QColor(255, 255, 255, 25)
-        qp.setBrush(bright)
-        qp.drawRect(0, bright_y, self.width(), 2)
-        qp.end()
-
-    def advance(self):
-        self._phase = (self._phase + 4) % max(1, self.height())
-        self.update()
-
-
 def progress_style(color, height=18):
     return f"""
         QProgressBar {{
@@ -3064,10 +2958,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.watch_page.installEventFilter(self)
         self.stack.addWidget(self.watch_page)
 
-        # 走査線オーバーレイは廃止 (chk 削除済). resize 連携だけ残しても無害だが
-        # 念のためダミー Widget を作って既存参照を維持.
-        self._scanline = QtWidgets.QWidget(central)
-        self._scanline.setVisible(False)
+        # 走査線オーバーレイは完全廃止. central の resize は eventFilter で受ける
         central.installEventFilter(self)
 
         # --- Listen page (没入型操作集中 UI) ---
@@ -4937,19 +4828,6 @@ class MainWindow(QtWidgets.QMainWindow):
             for cid, c in self.cards.items():
                 c.setVisible(cid in self.LISTEN_VISIBLE)
 
-    # ---- 走査線 ----
-    def _on_scanline_toggled(self, checked):
-        self._scanline.setVisible(checked)
-        if checked:
-            if not hasattr(self, "_scanline_timer"):
-                self._scanline_timer = QtCore.QTimer(self)
-                self._scanline_timer.timeout.connect(self._scanline.advance)
-            self._scanline_timer.start(33)
-            self._scanline.raise_()
-        else:
-            if hasattr(self, "_scanline_timer"):
-                self._scanline_timer.stop()
-
     # ---- central サイズ追従 ----
     def eventFilter(self, obj, event):
         # アクティビティ検出
@@ -4965,8 +4843,6 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._idle_overlay = None
 
         if et == QtCore.QEvent.Resize:
-            if obj is self.centralWidget():
-                self._scanline.setGeometry(obj.rect())
             if hasattr(self, "watch_page") and obj is self.watch_page:
                 r = self.watch_page.rect()
                 for w in (getattr(self, "_watch_tron", None),
@@ -5715,70 +5591,103 @@ class MainWindow(QtWidgets.QMainWindow):
 
         now = time.time()
 
-        # EEG
-        x = np.linspace(0, WINDOW_SEC, BUF_LEN)
-        for i, curve in enumerate(self.eeg_curves):
-            d = eeg_data[i].copy()
-            if not np.all(np.isfinite(d)):
-                d = np.nan_to_num(d)
-            d -= d.mean()
-            try:
-                d = sosfiltfilt(_SOS_BP, d)
-            except Exception:
-                pass
-            curve.setData(x, d)
+        # EEG — Studio の eeg カードが見えている時だけ描画 (重い filter を節約)
+        studio_visible = (getattr(self, "_mode", "studio") == "studio")
+        if studio_visible and self.cards.get("eeg") and \
+                self.cards["eeg"].isVisible():
+            x = np.linspace(0, WINDOW_SEC, BUF_LEN)
+            for i, curve in enumerate(self.eeg_curves):
+                d = eeg_data[i].copy()
+                if not np.all(np.isfinite(d)):
+                    d = np.nan_to_num(d)
+                d -= d.mean()
+                try:
+                    d = sosfiltfilt(_SOS_BP, d)
+                except Exception:
+                    pass
+                curve.setData(x, d)
 
-        # Band power → 半円ゲージ (4ch 平均、log->0..1 正規化)
-        for band in BAND_NAMES:
-            vals = bands[band]
-            valid = [v for v in vals if np.isfinite(v) and v > 0]
-            if not valid:
-                avg = 0.0
-            else:
-                avg = float(np.mean(valid))
-            # log 値 (-1..2.5) を 0..1 に
-            norm = max(0.0, min(1.0, (avg + 1.0) / 3.5))
-            self.band_bars[band].set_value(norm, raw=avg)
+        # Band power → 球体ゲージ (band カード可視時のみ描画)
+        if (studio_visible and self.cards.get("band")
+                and self.cards["band"].isVisible()):
+            for band in BAND_NAMES:
+                vals = bands[band]
+                valid = [v for v in vals if np.isfinite(v) and v > 0]
+                if not valid:
+                    avg = 0.0
+                else:
+                    avg = float(np.mean(valid))
+                # log 値 (-1..2.5) を 0..1 に
+                norm = max(0.0, min(1.0, (avg + 1.0) / 3.5))
+                self.band_bars[band].set_value(norm, raw=avg)
 
-        # Signal Quality (呼吸アニメ: Good=ゆっくり脈動, Bad=点滅速め)
-        import math as _math_ui
-        t_pulse = now * 1.5
-        for i, name in enumerate(CH_NAMES):
-            q = quality[i]
-            color = QUALITY_COLORS.get(q, "#e74c3c")
-            # Q 値で脈動速度: Good (1) は τ=2s, OK (2) は τ=1s, Bad (4) は τ=0.5s
-            rate = {1: 0.6, 2: 1.4, 4: 2.5}.get(int(q), 2.5)
-            pulse = 0.55 + 0.45 * (0.5 + 0.5 * _math_ui.sin(now * rate))
-            # 透明度を pulse でゆらす (font-size は据置)
-            qc = QtGui.QColor(color)
-            alpha = int(255 * pulse)
-            css_col = f"rgba({qc.red()},{qc.green()},{qc.blue()},{alpha})"
-            self.q_dots[name].setStyleSheet(
-                f"font-size: 22px; color: {css_col};")
-            txt = QUALITY_TEXT.get(q, "—")
-            self.q_texts[name].setText(txt)
-            self.q_texts[name].setStyleSheet(
-                f"font-size: 12px; color: {color}; font-weight: bold;")
-            self.q_descs[name].setText(QUALITY_DESC.get(q, "—"))
-        # アーティファクト
-        if touching:
-            self.t_icon.setText("🟢"); self.t_status.setText("接触中")
-            self.t_status.setStyleSheet("font-size: 12px; color: #2ecc71;")
-        else:
-            self.t_icon.setText("⚫"); self.t_status.setText("離れている")
-            self.t_status.setStyleSheet("font-size: 12px; color: #e74c3c;")
-        if blink:
-            self.b_icon.setText("👁"); self.b_status.setText("検出")
-            self.b_status.setStyleSheet("font-size: 12px; color: #f39c12;")
-        else:
-            self.b_icon.setText("⚪"); self.b_status.setText("なし")
-            self.b_status.setStyleSheet("font-size: 12px; color: #8a8a8a;")
-        if jaw:
-            self.j_icon.setText("😬"); self.j_status.setText("検出")
-            self.j_status.setStyleSheet("font-size: 12px; color: #e74c3c;")
-        else:
-            self.j_icon.setText("⚪"); self.j_status.setText("なし")
-            self.j_status.setStyleSheet("font-size: 12px; color: #8a8a8a;")
+        # Signal Quality (呼吸アニメ) — quality カード可視時のみ.
+        # setStyleSheet は非常に重い → アルファ値を 16段階バケットで丸めて
+        # 前回と同じバケットなら再適用しない.
+        if (studio_visible and self.cards.get("quality")
+                and self.cards["quality"].isVisible()):
+            import math as _math_ui
+            if not hasattr(self, "_q_dot_cache"):
+                self._q_dot_cache = {}     # name -> (color, alpha_bucket)
+                self._q_text_cache = {}    # name -> (txt, color)
+            for i, name in enumerate(CH_NAMES):
+                q = quality[i]
+                color = QUALITY_COLORS.get(q, "#e74c3c")
+                rate = {1: 0.6, 2: 1.4, 4: 2.5}.get(int(q), 2.5)
+                pulse = 0.55 + 0.45 * (0.5 + 0.5 * _math_ui.sin(now * rate))
+                alpha_bucket = int(pulse * 16)  # 0..16
+                cache_key = (color, alpha_bucket)
+                if self._q_dot_cache.get(name) != cache_key:
+                    self._q_dot_cache[name] = cache_key
+                    qc = QtGui.QColor(color)
+                    alpha = int(alpha_bucket / 16 * 255)
+                    self.q_dots[name].setStyleSheet(
+                        f"font-size: 22px; "
+                        f"color: rgba({qc.red()},{qc.green()},"
+                        f"{qc.blue()},{alpha});")
+                txt = QUALITY_TEXT.get(q, "—")
+                text_key = (txt, color)
+                if self._q_text_cache.get(name) != text_key:
+                    self._q_text_cache[name] = text_key
+                    self.q_texts[name].setText(txt)
+                    self.q_texts[name].setStyleSheet(
+                        f"font-size: 12px; color: {color}; "
+                        f"font-weight: bold;")
+                    self.q_descs[name].setText(QUALITY_DESC.get(q, "—"))
+            # アーティファクト (状態変化時のみ stylesheet を書き換える)
+            if not hasattr(self, "_artifact_cache"):
+                self._artifact_cache = {"t": None, "b": None, "j": None}
+            ac = self._artifact_cache
+            if ac["t"] != touching:
+                ac["t"] = touching
+                if touching:
+                    self.t_icon.setText("🟢"); self.t_status.setText("接触中")
+                    self.t_status.setStyleSheet(
+                        "font-size: 12px; color: #2ecc71;")
+                else:
+                    self.t_icon.setText("⚫"); self.t_status.setText("離れている")
+                    self.t_status.setStyleSheet(
+                        "font-size: 12px; color: #e74c3c;")
+            if ac["b"] != blink:
+                ac["b"] = blink
+                if blink:
+                    self.b_icon.setText("👁"); self.b_status.setText("検出")
+                    self.b_status.setStyleSheet(
+                        "font-size: 12px; color: #f39c12;")
+                else:
+                    self.b_icon.setText("⚪"); self.b_status.setText("なし")
+                    self.b_status.setStyleSheet(
+                        "font-size: 12px; color: #8a8a8a;")
+            if ac["j"] != jaw:
+                ac["j"] = jaw
+                if jaw:
+                    self.j_icon.setText("😬"); self.j_status.setText("検出")
+                    self.j_status.setStyleSheet(
+                        "font-size: 12px; color: #e74c3c;")
+                else:
+                    self.j_icon.setText("⚪"); self.j_status.setText("なし")
+                    self.j_status.setStyleSheet(
+                        "font-size: 12px; color: #8a8a8a;")
 
         # Emotion metrics (Russell + Engagement + Arousal-only)
         rus = compute_russell(bands, quality)
@@ -5836,14 +5745,16 @@ class MainWindow(QtWidgets.QMainWindow):
             self._write_csv_row(eeg_data, bands, quality, touching, blink, jaw,
                                 rus, eng, ar, hr_osc)
 
-        # HR & fNIRS
-        for i, curve in enumerate(self.hr_curves):
-            d = optics_data[i]
-            if d.std() > 0 and np.all(np.isfinite(d)):
-                d_show = d - d.mean()
-            else:
-                d_show = d
-            curve.setData(d_show)
+        # HR & fNIRS — HR カード可視時のみ波形を更新
+        if studio_visible and self.cards.get("hr") and \
+                self.cards["hr"].isVisible():
+            for i, curve in enumerate(self.hr_curves):
+                d = optics_data[i]
+                if d.std() > 0 and np.all(np.isfinite(d)):
+                    d_show = d - d.mean()
+                else:
+                    d_show = d
+                curve.setData(d_show)
 
         # HR 計算 (250msごと, optics[0] から)
         if now - self._last_hr_update >= 0.25:
@@ -5853,8 +5764,10 @@ class MainWindow(QtWidgets.QMainWindow):
             self.hr_bpm_label.setText(f"♥  {bpm}")
             self.hr_status.setText(status_txt)
 
-        # 2D Spectrogram (STFT rolling)
-        if now - self._last_spec_update >= SPEC_UPDATE_INTERVAL:
+        # 2D Spectrogram (STFT rolling) — spec カード可視時のみ welch を回す
+        if (studio_visible and self.cards.get("spec")
+                and self.cards["spec"].isVisible()
+                and now - self._last_spec_update >= SPEC_UPDATE_INTERVAL):
             self._last_spec_update = now
             ch_idx = self.spec_ch_selector.currentIndex()
             seg = eeg_data[ch_idx][-FS:]
@@ -5869,15 +5782,19 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.spec_img.setImage(self.spec_data, levels=(-6.0, 3.0),
                                        autoLevels=False)
 
-        # ヘッダー状態
-        if now - last_time < 1.0:
-            self.status_label.setText("● Streaming")
-            self.status_label.setStyleSheet(
-                "font-size: 14px; color: #2ecc71; font-weight: bold;")
-        else:
-            self.status_label.setText("● No Signal")
-            self.status_label.setStyleSheet(
-                "font-size: 14px; color: #e74c3c; font-weight: bold;")
+        # ヘッダー状態 — 状態が変わった時だけ stylesheet を書く
+        streaming = (now - last_time < 1.0)
+        prev = getattr(self, "_streaming_state", None)
+        if prev != streaming:
+            self._streaming_state = streaming
+            if streaming:
+                self.status_label.setText("● Streaming")
+                self.status_label.setStyleSheet(
+                    "font-size: 14px; color: #2ecc71; font-weight: bold;")
+            else:
+                self.status_label.setText("● No Signal")
+                self.status_label.setStyleSheet(
+                    "font-size: 14px; color: #e74c3c; font-weight: bold;")
         self.rate_label.setText(f"{msg_count * 30} Hz")
 
         # オーディオレベルメータ更新
@@ -5888,8 +5805,9 @@ class MainWindow(QtWidgets.QMainWindow):
             except Exception:
                 pass
 
-        # 出力スペクトル更新
-        if hasattr(self, "audio_spectrum_bar"):
+        # 出力スペクトル更新 — 表示中だけ計算する (FFT が重いので)
+        if (hasattr(self, "audio_spectrum_bar")
+                and self.audio_spectrum_bar.isVisible()):
             try:
                 spec = self.audio.get_output_spectrum(n_bins=22)
                 self.audio_spectrum_bar.set_values(list(spec))

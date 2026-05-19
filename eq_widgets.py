@@ -823,12 +823,16 @@ class InstrumentFader(QtWidgets.QWidget):
         self._wave_phase = 0.0
         self._wave_timer = QtCore.QTimer(self)
         self._wave_timer.timeout.connect(self._advance_wave)
-        self._wave_timer.start(60)   # ~16fps. 軽い動き
+        self._wave_timer.start(100)   # ~10fps. 軽い動き
 
     def _advance_wave(self):
+        # 非表示なら更新を完全にスキップ (Listen/Watch 中に EQ が隠れている時)
+        if not self.isVisible():
+            return
         # 走らせる速度. dB の絶対値が大きいほど早く流れる演出.
         import math as _m
-        speed = 0.08 + abs(self._db) / max(0.01, self.gain_max) * 0.20
+        # 100ms 化に合わせて速度を 1.67倍にして見た目維持
+        speed = (0.08 + abs(self._db) / max(0.01, self.gain_max) * 0.20) * 1.67
         self._wave_phase = (self._wave_phase + speed) % (2 * _m.pi)
         self.update()
 
