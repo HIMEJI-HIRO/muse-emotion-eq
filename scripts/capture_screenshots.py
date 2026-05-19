@@ -148,7 +148,7 @@ def main():
     app = QtWidgets.QApplication(sys.argv)
     inject_demo_state()
     win = rm.MainWindow()
-    win.resize(1600, 1000)
+    win.resize(2200, 1400)   # 大きめに (Studio の詰まり感解消)
     win.show()
     schedule_captures(app, win)
     sys.exit(app.exec_())
