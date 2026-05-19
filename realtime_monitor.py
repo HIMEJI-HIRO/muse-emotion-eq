@@ -328,12 +328,8 @@ class _HoverInfoPopup(QtWidgets.QFrame):
         lay.addWidget(self._body_lbl)
         self.setMinimumWidth(280)
         self.setMaximumWidth(360)
-        # DropShadow accent
-        eff = QtWidgets.QGraphicsDropShadowEffect(self)
-        eff.setBlurRadius(28)
-        eff.setOffset(0, 4)
-        self._shadow = eff
-        self.setGraphicsEffect(eff)
+        # DropShadow は translucent toplevel での DWM 衝突を避けて省略
+        self._shadow = None
         self._restyle()
 
     def _restyle(self):
@@ -358,10 +354,11 @@ class _HoverInfoPopup(QtWidgets.QFrame):
             "background: transparent; border: none; "
             "line-height: 1.4; }"
         )
-        ar = QtGui.QColor(accent).red()
-        ag = QtGui.QColor(accent).green()
-        ab = QtGui.QColor(accent).blue()
-        self._shadow.setColor(QtGui.QColor(ar, ag, ab, 200))
+        if self._shadow is not None:
+            ar = QtGui.QColor(accent).red()
+            ag = QtGui.QColor(accent).green()
+            ab = QtGui.QColor(accent).blue()
+            self._shadow.setColor(QtGui.QColor(ar, ag, ab, 200))
 
     def set_content(self, title, body):
         self._title_lbl.setText(title)
@@ -892,20 +889,13 @@ class _Toast(QtWidgets.QFrame):
         # スタイル
         self.setStyleSheet(
             f"QFrame#toast {{ background-color: rgba(8, 8, 14, 235); "
-            f"border: 1.5px solid {accent}; border-radius: 10px; }}"
+            f"border: 2px solid {accent}; border-radius: 10px; }}"
             f"QLabel#toast_label {{ color: #ffffff; font-size: 12px; "
             "font-weight: 500; letter-spacing: 0.5px; "
             "background: transparent; border: none; }"
         )
-        # DropShadow accent
-        eff = QtWidgets.QGraphicsDropShadowEffect(self)
-        eff.setBlurRadius(28)
-        eff.setOffset(0, 4)
-        ar, ag, ab = (QtGui.QColor(accent).red(),
-                       QtGui.QColor(accent).green(),
-                       QtGui.QColor(accent).blue())
-        eff.setColor(QtGui.QColor(ar, ag, ab, 220))
-        self.setGraphicsEffect(eff)
+        # DropShadow は translucent 子 widget で
+        # Windows DWM の UpdateLayeredWindowIndirect 警告を出すため省略
         # 自動フェードアウト
         QtCore.QTimer.singleShot(duration_ms, self._fade_out)
 
@@ -2969,17 +2959,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self.volume_slider.setValue(100)
         self.volume_slider.setFixedWidth(90)
         self.volume_slider.setFixedHeight(16)
-        ar_v = QtGui.QColor(self.theme.accent).red()
-        ag_v = QtGui.QColor(self.theme.accent).green()
-        ab_v = QtGui.QColor(self.theme.accent).blue()
+        accent_hex = self.theme.accent
         self.volume_slider.setStyleSheet(
-            "QSlider::groove:horizontal { background: rgba(255,255,255,30); "
+            "QSlider::groove:horizontal { background: #2a2a2c; "
             "height: 4px; border-radius: 2px; }"
-            f"QSlider::sub-page:horizontal {{ background: rgba("
-            f"{ar_v},{ag_v},{ab_v},220); border-radius: 2px; }}"
-            f"QSlider::handle:horizontal {{ background: {self.theme.accent}; "
-            "width: 12px; height: 12px; border-radius: 6px; "
-            "margin: -4px 0; }}"
+            f"QSlider::sub-page:horizontal {{ background: {accent_hex}; "
+            "border-radius: 2px; }}"
+            f"QSlider::handle:horizontal {{ background: {accent_hex}; "
+            "width: 12px; border-radius: 6px; "
+            "margin: -6px 0; }}"
         )
         self.volume_slider.valueChanged.connect(self._on_volume_changed)
         self.volume_slider.setToolTip("Master volume (0–150%)")
@@ -3952,9 +3940,16 @@ class MainWindow(QtWidgets.QMainWindow):
         # 位置決定: 右下、既存トーストの上に積む
         if not hasattr(self, "_active_toasts"):
             self._active_toasts = []
-        # 不可視のトーストを除去
-        self._active_toasts = [t for t in self._active_toasts
-                                if t.isVisible() and not t.parent() is None]
+        # 不可視/削除済みトーストを除去 (RuntimeError 回避)
+        clean = []
+        for t in self._active_toasts:
+            try:
+                if t.isVisible() and t.parent() is not None:
+                    clean.append(t)
+            except RuntimeError:
+                # 既に C++ オブジェクト deleted
+                pass
+        self._active_toasts = clean
         margin = 20
         y_offset = margin
         for t in self._active_toasts:
