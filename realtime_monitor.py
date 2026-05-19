@@ -1048,6 +1048,93 @@ class SplashScreen(QtWidgets.QWidget):
         qp.end()
 
 
+class _CursorParticles(QtWidgets.QWidget):
+    """カーソル位置にネオン粒子を撒く軽量オーバーレイ.
+    Watch モード専用. setMouseTracking で常時マウス追従.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        # 透過 + マウスイベントは通過 (背景の widget が普通に使えるよう)
+        self.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents, True)
+        self.setAttribute(QtCore.Qt.WA_TranslucentBackground, True)
+        self._accent = QtGui.QColor(120, 230, 255)
+        self._particles = []   # [x, y, vx, vy, life, max_life, size]
+        self._last_mouse = QtCore.QPoint(0, 0)
+        self._last_spawn = 0.0
+        self._timer = QtCore.QTimer(self)
+        self._timer.timeout.connect(self._tick)
+        self._timer.start(50)   # 20fps
+        # マウス位置監視: 親 (watch_page) で eventFilter
+        if parent is not None:
+            parent.setMouseTracking(True)
+            parent.installEventFilter(self)
+
+    def set_accent(self, hex_color):
+        self._accent = QtGui.QColor(hex_color)
+
+    def eventFilter(self, obj, event):
+        if event.type() == QtCore.QEvent.MouseMove:
+            self._last_mouse = event.pos()
+            self._maybe_spawn()
+        return False
+
+    def _maybe_spawn(self):
+        import random as _r
+        now = time.time()
+        if (now - self._last_spawn) < 0.04:
+            return
+        self._last_spawn = now
+        # 3 個 spawn
+        for _ in range(3):
+            self._particles.append([
+                float(self._last_mouse.x() + _r.uniform(-4, 4)),
+                float(self._last_mouse.y() + _r.uniform(-4, 4)),
+                _r.uniform(-30, 30),       # vx
+                _r.uniform(-30, 30),       # vy
+                0.0,
+                0.8 + _r.random() * 0.6,
+                2.0 + _r.random() * 1.5,
+            ])
+        if len(self._particles) > 80:
+            self._particles = self._particles[-80:]
+
+    def _tick(self):
+        if not self.isVisible():
+            return
+        now = time.time()
+        dt = 0.05
+        alive = []
+        for p in self._particles:
+            p[4] += dt
+            p[0] += p[2] * dt
+            p[1] += p[3] * dt
+            # 摩擦
+            p[2] *= 0.92
+            p[3] *= 0.92
+            if p[4] < p[5]:
+                alive.append(p)
+        self._particles = alive
+        self.update()
+
+    def paintEvent(self, event):
+        if not self._particles:
+            return
+        qp = QtGui.QPainter(self)
+        qp.setRenderHint(QtGui.QPainter.Antialiasing, True)
+        qp.setPen(QtCore.Qt.NoPen)
+        a = self._accent
+        for x, y, vx, vy, life, max_life, size in self._particles:
+            t = life / max_life
+            alpha = int(220 * (1.0 - t) ** 1.5)
+            if alpha < 6:
+                continue
+            r = size * (1.0 + 0.5 * (1.0 - t))
+            qp.setBrush(QtGui.QColor(a.red(), a.green(), a.blue(), alpha))
+            qp.drawEllipse(QtCore.QPointF(x, y), r, r)
+        qp.end()
+
+
 class _MatrixRain(QtWidgets.QWidget):
     """Matrix 風 binary rain. Watch モードの背景装飾."""
 
@@ -2642,11 +2729,16 @@ class MainWindow(QtWidgets.QMainWindow):
         self._watch_hud = self._build_watch_hud()
         self._watch_hud.setParent(self.watch_page)
         self._watch_hud.setGeometry(self.watch_page.rect())
-        # スタッキング順: tron (一番下) → matrix → mandala → hud
+        # マウス追従パーティクル (HUD の上)
+        self._watch_cursor_particles = _CursorParticles(self.watch_page)
+        self._watch_cursor_particles.set_accent(self.theme.accent)
+        self._watch_cursor_particles.setGeometry(self.watch_page.rect())
+        # スタッキング順: tron → matrix → mandala → hud → cursor particles
         self._watch_tron.lower()
         self._watch_matrix.raise_()
         self._watch_mandala.raise_()
         self._watch_hud.raise_()
+        self._watch_cursor_particles.raise_()
         self.watch_page.installEventFilter(self)
         self.stack.addWidget(self.watch_page)
 
@@ -2712,6 +2804,10 @@ class MainWindow(QtWidgets.QMainWindow):
                             activated=lambda: self._set_mode("watch"))
         QtWidgets.QShortcut(QtGui.QKeySequence("F1"), self,
                             activated=self._show_help)
+        QtWidgets.QShortcut(QtGui.QKeySequence("F11"), self,
+                            activated=self._toggle_fullscreen)
+        QtWidgets.QShortcut(QtGui.QKeySequence("F12"), self,
+                            activated=self._take_screenshot)
 
         # REC 脈動アニメ用 phase
         self._rec_pulse_phase = 0.0
@@ -2916,6 +3012,22 @@ class MainWindow(QtWidgets.QMainWindow):
         self.audio_btn.setToolTip(
             "VB-CABLE → pedalboard → ヘッドホン の音声処理を開始/停止")
         row1.addWidget(self.audio_btn)
+
+        # Replay (リプレイ)
+        self.replay_btn = QtWidgets.QPushButton("▶ Replay")
+        self.replay_btn.setCursor(QtCore.Qt.PointingHandCursor)
+        self.replay_btn.setFixedHeight(28)
+        self.replay_btn.setStyleSheet(
+            "QPushButton { background-color: #1e1e20; color: #b0b0b0; "
+            "border: 1px solid #303033; border-radius: 13px; "
+            "padding: 3px 14px; font-size: 11px; font-weight: 600; }"
+            "QPushButton:hover { background-color: #2a2a2c; color: #e8e8e8; "
+            "border-color: #45454a; }"
+        )
+        self.replay_btn.setToolTip("Replay a recorded CSV session")
+        self.replay_btn.clicked.connect(self._toggle_replay)
+        row1.addWidget(self.replay_btn)
+        self._replay_state = None    # 再生中の dict (data, idx, start_t)
 
         # REC
         self.rec_btn = QtWidgets.QPushButton("● REC")
@@ -3914,6 +4026,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self._watch_tron.set_accent(self.theme.accent)
         if hasattr(self, "_watch_matrix"):
             self._watch_matrix.set_accent(self.theme.accent)
+        if hasattr(self, "_watch_cursor_particles"):
+            self._watch_cursor_particles.set_accent(self.theme.accent)
         # ヘッダ neon border + title glow を accent 色に
         if hasattr(self, "_header_frame"):
             self._restyle_header(self._header_frame)
@@ -4058,6 +4172,138 @@ class MainWindow(QtWidgets.QMainWindow):
         eff.setBlurRadius(12 + 14 * pulse)
         eff.setOffset(0, 0)
 
+    def _toggle_replay(self):
+        """CSV リプレイの開始/停止. 再生中なら停止."""
+        if self._replay_state is not None:
+            self._stop_replay()
+            return
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self, "Open CSV recording", str(
+                __import__("pathlib").Path.cwd() / "recordings"),
+            "CSV files (*.csv)")
+        if not path:
+            return
+        try:
+            import csv as _csv
+            rows = []
+            with open(path, "r", encoding="utf-8") as f:
+                reader = _csv.DictReader(f)
+                for r in reader:
+                    rows.append(r)
+            if not rows:
+                self._show_toast("⚠ Empty CSV", accent="#e74c3c")
+                return
+            self._replay_state = {
+                "data": rows,
+                "idx": 0,
+                "start_t": time.time(),
+                "first_ts": float(rows[0].get("time_s", "0") or 0),
+                "path": path,
+            }
+            self.replay_btn.setText("■ Stop Replay")
+            self.replay_btn.setStyleSheet(
+                f"QPushButton {{ background-color: {self.theme.accent}; "
+                f"color: #000; border: 1px solid {self.theme.accent}; "
+                "border-radius: 13px; padding: 3px 14px; "
+                "font-size: 11px; font-weight: 600; }}")
+            # 1 つだけの再生 timer
+            if not hasattr(self, "_replay_timer"):
+                self._replay_timer = QtCore.QTimer(self)
+                self._replay_timer.timeout.connect(self._replay_tick)
+            self._replay_timer.start(33)
+            import os as _os
+            self._show_toast(
+                f"▶ Replay: {_os.path.basename(path)} ({len(rows)} rows)")
+        except Exception as e:
+            self._show_toast(f"⚠ Replay failed: {e}", accent="#e74c3c")
+
+    def _stop_replay(self):
+        if hasattr(self, "_replay_timer"):
+            self._replay_timer.stop()
+        self._replay_state = None
+        self.replay_btn.setText("▶ Replay")
+        self.replay_btn.setStyleSheet(
+            "QPushButton { background-color: #1e1e20; color: #b0b0b0; "
+            "border: 1px solid #303033; border-radius: 13px; "
+            "padding: 3px 14px; font-size: 11px; font-weight: 600; }"
+            "QPushButton:hover { background-color: #2a2a2c; color: #e8e8e8; "
+            "border-color: #45454a; }"
+        )
+        self._show_toast("■ Replay stopped")
+
+    def _replay_tick(self):
+        """毎フレーム呼ばれ, CSV の経過時刻に対応する行を state に注入."""
+        rs = self._replay_state
+        if rs is None:
+            return
+        elapsed = time.time() - rs["start_t"]
+        target_ts = rs["first_ts"] + elapsed
+        rows = rs["data"]
+        # 現在 idx から先に進める
+        i = rs["idx"]
+        while i + 1 < len(rows):
+            try:
+                t = float(rows[i + 1].get("time_s", "0") or 0)
+            except Exception:
+                t = 0
+            if t > target_ts:
+                break
+            i += 1
+        rs["idx"] = i
+        # 最終行に到達したらループ
+        if i >= len(rows) - 1:
+            rs["start_t"] = time.time()
+            rs["idx"] = 0
+            return
+        # 現在行を state に注入
+        row = rows[i]
+        try:
+            # EEG ch ごとの最新サンプルを補完するのは難しいので,
+            # bands, quality, HR, arousal/valence/eng を inject するのみ
+            with state.lock:
+                for bi, band in enumerate(BAND_NAMES):
+                    for ch in range(4):
+                        col = f"band_{band}_{ch}"
+                        if col in row:
+                            state.bands[band][ch] = float(row[col])
+                for ch in range(4):
+                    col = f"quality_{ch}"
+                    if col in row:
+                        state.quality[ch] = float(row[col])
+                if "hr_osc" in row:
+                    try:
+                        state.heart_rate = float(row["hr_osc"])
+                    except Exception:
+                        pass
+                state.last_eeg_time = time.time()
+                state.msg_count = 6
+        except Exception:
+            pass
+
+    def _toggle_fullscreen(self):
+        if self.isFullScreen():
+            self.showNormal()
+            self._show_toast("⛶ Windowed")
+        else:
+            self.showFullScreen()
+            self._show_toast("⛶ Fullscreen (F11)")
+
+    def _take_screenshot(self):
+        """F12: 現在ウィンドウを ~/.muse_eq/screenshots/ に PNG 保存."""
+        from pathlib import Path
+        from datetime import datetime
+        out_dir = Path.home() / ".muse_eq" / "screenshots"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        path = out_dir / f"shot_{ts}.png"
+        try:
+            pix = self.grab()
+            pix.save(str(path), "PNG")
+            self._show_toast(f"📷 Saved: {path.name}", duration_ms=3500)
+        except Exception as e:
+            self._show_toast(f"⚠ Screenshot failed: {e}",
+                              accent="#e74c3c")
+
     def _pick_custom_accent(self):
         """QColorDialog で任意の accent 色を選んで適用."""
         cur = QtGui.QColor(self.theme.accent)
@@ -4136,6 +4382,8 @@ class MainWindow(QtWidgets.QMainWindow):
             "<tr><td><b>R</b></td><td>● Toggle REC</td></tr>"
             "<tr><td><b>Esc</b></td><td>Restore from focused card</td></tr>"
             "<tr><td><b>F1</b></td><td>Show this help</td></tr>"
+            "<tr><td><b>F11</b></td><td>⛶ Toggle fullscreen</td></tr>"
+            "<tr><td><b>F12</b></td><td>📷 Save screenshot</td></tr>"
             "</table>"
         )
         msg.setStandardButtons(QtWidgets.QMessageBox.Ok)
@@ -4304,7 +4552,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 for w in (getattr(self, "_watch_tron", None),
                           getattr(self, "_watch_matrix", None),
                           getattr(self, "_watch_mandala", None),
-                          getattr(self, "_watch_hud", None)):
+                          getattr(self, "_watch_hud", None),
+                          getattr(self, "_watch_cursor_particles", None)):
                     if w is not None:
                         w.setGeometry(r)
                 # 再度 stacking
@@ -4315,6 +4564,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 if hasattr(self, "_watch_mandala"):
                     self._watch_mandala.raise_()
                 self._watch_hud.raise_()
+                if hasattr(self, "_watch_cursor_particles"):
+                    self._watch_cursor_particles.raise_()
         return super().eventFilter(obj, event)
 
     # ---- Watch mode の HUD ----
