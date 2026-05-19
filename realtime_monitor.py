@@ -1048,6 +1048,136 @@ class SplashScreen(QtWidgets.QWidget):
         qp.end()
 
 
+class _IdleScreensaver(QtWidgets.QWidget):
+    """アイドル時に表示する全画面オーバーレイ. 脈動 brain + 時計."""
+
+    closed = QtCore.pyqtSignal()
+
+    def __init__(self, parent=None, accent="#1abc9c"):
+        super().__init__(parent)
+        self.setAttribute(QtCore.Qt.WA_StyledBackground, True)
+        self.setStyleSheet("background-color: rgba(2, 2, 8, 245);")
+        self._accent = QtGui.QColor(accent)
+        self._phase = 0.0
+        self._timer = QtCore.QTimer(self)
+        self._timer.timeout.connect(self._tick)
+        self._timer.start(50)
+        self.setMouseTracking(True)
+
+    def set_accent(self, hex_color):
+        self._accent = QtGui.QColor(hex_color)
+
+    def _tick(self):
+        import math as _m
+        self._phase = (self._phase + 0.05) % (2 * _m.pi)
+        self.update()
+
+    def paintEvent(self, event):
+        import math as _m
+        qp = QtGui.QPainter(self)
+        qp.setRenderHint(QtGui.QPainter.Antialiasing, True)
+        w = self.width()
+        h = self.height()
+        cx, cy = w / 2, h / 2
+        a = self._accent
+        pulse = 0.5 + 0.5 * _m.sin(self._phase)
+
+        # 多層グロー
+        for mult, alpha in [(3.0, 18), (2.0, 40), (1.2, 100)]:
+            r = 100 * mult * (0.85 + 0.15 * pulse)
+            grad = QtGui.QRadialGradient(QtCore.QPointF(cx, cy - 40), r)
+            grad.setColorAt(0.0, QtGui.QColor(a.red(), a.green(),
+                                               a.blue(),
+                                               int(alpha * pulse)))
+            grad.setColorAt(1.0, QtGui.QColor(a.red(), a.green(),
+                                               a.blue(), 0))
+            qp.setPen(QtCore.Qt.NoPen)
+            qp.setBrush(grad)
+            qp.drawEllipse(QtCore.QPointF(cx, cy - 40), r, r)
+
+        # 脳絵文字 (中央)
+        emo_font = QtGui.QFont()
+        emo_font.setPointSize(80)
+        qp.setFont(emo_font)
+        qp.setPen(QtGui.QColor(255, 255, 255, 240))
+        qp.drawText(QtCore.QRectF(0, cy - 110, w, 140),
+                    QtCore.Qt.AlignCenter, "🧠")
+
+        # 時計
+        clock_font = QtGui.QFont("Consolas")
+        clock_font.setPointSize(48)
+        clock_font.setBold(True)
+        qp.setFont(clock_font)
+        qp.setPen(a)
+        qp.drawText(QtCore.QRectF(0, cy + 50, w, 70),
+                    QtCore.Qt.AlignCenter, time.strftime("%H:%M"))
+
+        # サブ
+        sub_font = QtGui.QFont()
+        sub_font.setPointSize(11)
+        sub_font.setLetterSpacing(QtGui.QFont.AbsoluteSpacing, 3)
+        qp.setFont(sub_font)
+        qp.setPen(QtGui.QColor(160, 160, 160))
+        qp.drawText(QtCore.QRectF(0, cy + 130, w, 24),
+                    QtCore.Qt.AlignCenter,
+                    "EEG ADAPTIVE EQ  ·  IDLE")
+        qp.drawText(QtCore.QRectF(0, h - 40, w, 20),
+                    QtCore.Qt.AlignCenter,
+                    "Press any key or move mouse to resume")
+        qp.end()
+
+    def mousePressEvent(self, event):
+        self.closed.emit()
+        self.deleteLater()
+
+    def keyPressEvent(self, event):
+        self.closed.emit()
+        self.deleteLater()
+
+
+class _PreviewComboBox(QtWidgets.QComboBox):
+    """ドロップダウンの項目を hover した瞬間にプレビュー反映,
+    選択せずに閉じたら元に戻すコンボボックス."""
+
+    def __init__(self, on_preview, on_commit, get_current, parent=None):
+        super().__init__(parent)
+        self._on_preview = on_preview
+        self._on_commit = on_commit
+        self._get_current = get_current
+        self._saved = None
+        self._committed = False
+        self.highlighted[str].connect(self._on_highlighted)
+        self.activated[str].connect(self._on_activated)
+
+    def showPopup(self):
+        self._saved = self._get_current()
+        self._committed = False
+        super().showPopup()
+
+    def hidePopup(self):
+        super().hidePopup()
+        if not self._committed and self._saved is not None:
+            # 選択せずに閉じた場合、元のテーマに戻す
+            try:
+                self._on_preview(self._saved)
+            except Exception:
+                pass
+        self._saved = None
+
+    def _on_highlighted(self, name):
+        try:
+            self._on_preview(name)
+        except Exception:
+            pass
+
+    def _on_activated(self, name):
+        self._committed = True
+        try:
+            self._on_commit(name)
+        except Exception:
+            pass
+
+
 class _CursorParticles(QtWidgets.QWidget):
     """カーソル位置にネオン粒子を撒く軽量オーバーレイ.
     Watch モード専用. setMouseTracking で常時マウス追従.
@@ -2729,6 +2859,19 @@ class MainWindow(QtWidgets.QMainWindow):
         self._watch_hud = self._build_watch_hud()
         self._watch_hud.setParent(self.watch_page)
         self._watch_hud.setGeometry(self.watch_page.rect())
+        # Photo ボタン (右上)
+        self._watch_photo_btn = QtWidgets.QPushButton("📷", self.watch_page)
+        self._watch_photo_btn.setCursor(QtCore.Qt.PointingHandCursor)
+        self._watch_photo_btn.setFixedSize(36, 36)
+        self._watch_photo_btn.setStyleSheet(
+            "QPushButton { background-color: rgba(0,0,0,140); "
+            "color: #ffffff; border: 1.5px solid rgba(255,255,255,80); "
+            "border-radius: 18px; font-size: 16px; }"
+            f"QPushButton:hover {{ border-color: {self.theme.accent}; "
+            "background-color: rgba(0,0,0,200); }}"
+        )
+        self._watch_photo_btn.setToolTip("Save current Watch view (PNG)")
+        self._watch_photo_btn.clicked.connect(self._watch_save_photo)
         # マウス追従パーティクル (HUD の上)
         self._watch_cursor_particles = _CursorParticles(self.watch_page)
         self._watch_cursor_particles.set_accent(self.theme.accent)
@@ -2824,11 +2967,47 @@ class MainWindow(QtWidgets.QMainWindow):
         # 初回起動時のみ Welcome オーバーレイ
         QtCore.QTimer.singleShot(400, self._maybe_show_welcome)
 
+        # アイドルスクリーンセーバー (180秒無操作で発動)
+        self._last_activity_time = time.time()
+        self._idle_overlay = None
+        QtWidgets.QApplication.instance().installEventFilter(self)
+        self._idle_timer = QtCore.QTimer(self)
+        self._idle_timer.timeout.connect(self._idle_check)
+        self._idle_timer.start(1500)
+        self._idle_threshold = 180.0   # 秒
+
     def _welcome_flag_path(self):
         from pathlib import Path
         d = Path.home() / ".muse_eq"
         d.mkdir(parents=True, exist_ok=True)
         return d / "welcome_seen.flag"
+
+    def _idle_check(self):
+        """アイドル時間チェック. 閾値超えたらスクリーンセーバー表示."""
+        if self._idle_overlay is not None:
+            return   # 既に表示中
+        # 録画中 or リプレイ中はアイドルにしない
+        if (getattr(self, "recording", False)
+                or getattr(self, "_replay_state", None) is not None):
+            self._last_activity_time = time.time()
+            return
+        elapsed = time.time() - self._last_activity_time
+        if elapsed < self._idle_threshold:
+            return
+        try:
+            ov = _IdleScreensaver(self.centralWidget(),
+                                   accent=self.theme.accent)
+            ov.setGeometry(self.centralWidget().rect())
+            ov.show()
+            ov.raise_()
+            ov.closed.connect(self._on_idle_closed)
+            self._idle_overlay = ov
+        except Exception as e:
+            print("[idle] err:", e)
+
+    def _on_idle_closed(self):
+        self._idle_overlay = None
+        self._last_activity_time = time.time()
 
     def _maybe_show_welcome(self):
         flag = self._welcome_flag_path()
@@ -3127,14 +3306,17 @@ class MainWindow(QtWidgets.QMainWindow):
                        "padding: 2px 7px; font-size: 10px; }"
                        "QComboBox:hover { border-color: #45454a; }")
 
-        # Theme
+        # Theme (hover preview 対応)
         row2.addWidget(self._small_label("Theme"))
-        self.theme_selector = QtWidgets.QComboBox()
+        self.theme_selector = _PreviewComboBox(
+            on_preview=lambda n: self.theme.set(n),
+            on_commit=lambda n: self.theme.set(n),
+            get_current=lambda: self.theme.name,
+        )
         self.theme_selector.addItems(list(THEMES.keys()))
         self.theme_selector.setCurrentText(self.theme.name)
         self.theme_selector.setStyleSheet(small_combo
                                           + " QComboBox { min-width: 90px; }")
-        self.theme_selector.currentTextChanged.connect(self.theme.set)
         row2.addWidget(self.theme_selector)
 
         # カスタム色ピッカー
@@ -3151,14 +3333,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.theme_color_btn.clicked.connect(self._pick_custom_accent)
         row2.addWidget(self.theme_color_btn)
 
-        # BG
+        # BG (hover preview 対応)
         row2.addWidget(self._small_label("BG"))
-        self.bg_selector = QtWidgets.QComboBox()
+        self.bg_selector = _PreviewComboBox(
+            on_preview=lambda n: self.theme.set_bg(n),
+            on_commit=lambda n: self.theme.set_bg(n),
+            get_current=lambda: self.theme.bg_name,
+        )
         self.bg_selector.addItems(list(BG_PALETTES.keys()))
         self.bg_selector.setCurrentText(self.theme.bg_name)
         self.bg_selector.setStyleSheet(small_combo
                                        + " QComboBox { min-width: 100px; }")
-        self.bg_selector.currentTextChanged.connect(self.theme.set_bg)
         row2.addWidget(self.bg_selector)
 
         # Out デバイス
@@ -4288,6 +4473,24 @@ class MainWindow(QtWidgets.QMainWindow):
             self.showFullScreen()
             self._show_toast("⛶ Fullscreen (F11)")
 
+    def _watch_save_photo(self):
+        """Watch ビューだけを PNG 保存 (HUD 含む現在描画)."""
+        from pathlib import Path
+        from datetime import datetime
+        out_dir = Path.home() / ".muse_eq" / "watch_photos"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        sub = "?"
+        if getattr(self, "sea_widget", None) is not None:
+            sub = getattr(self.sea_widget, "_sub_view", "?")
+        path = out_dir / f"watch_{sub}_{ts}.png"
+        try:
+            pix = self.watch_page.grab()
+            pix.save(str(path), "PNG")
+            self._show_toast(f"📷 {path.name}", duration_ms=3500)
+        except Exception as e:
+            self._show_toast(f"⚠ Photo failed: {e}", accent="#e74c3c")
+
     def _take_screenshot(self):
         """F12: 現在ウィンドウを ~/.muse_eq/screenshots/ に PNG 保存."""
         from pathlib import Path
@@ -4544,7 +4747,19 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # ---- central サイズ追従 ----
     def eventFilter(self, obj, event):
-        if event.type() == QtCore.QEvent.Resize:
+        # アクティビティ検出
+        et = event.type()
+        if et in (QtCore.QEvent.MouseMove, QtCore.QEvent.MouseButtonPress,
+                  QtCore.QEvent.KeyPress, QtCore.QEvent.Wheel):
+            self._last_activity_time = time.time()
+            if self._idle_overlay is not None:
+                try:
+                    self._idle_overlay.deleteLater()
+                except Exception:
+                    pass
+                self._idle_overlay = None
+
+        if et == QtCore.QEvent.Resize:
             if obj is self.centralWidget():
                 self._scanline.setGeometry(obj.rect())
             if hasattr(self, "watch_page") and obj is self.watch_page:
@@ -4566,6 +4781,14 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._watch_hud.raise_()
                 if hasattr(self, "_watch_cursor_particles"):
                     self._watch_cursor_particles.raise_()
+                if hasattr(self, "_watch_photo_btn"):
+                    # 右上に常駐
+                    pad = 14
+                    self._watch_photo_btn.move(
+                        self.watch_page.width()
+                        - self._watch_photo_btn.width() - pad,
+                        pad + 50)   # 上部 status bar 下に
+                    self._watch_photo_btn.raise_()
         return super().eventFilter(obj, event)
 
     # ---- Watch mode の HUD ----

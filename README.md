@@ -202,13 +202,21 @@ muse-emotion-eq/
 - [x] **Phase 0** — Muse 受信 / 可視化基盤
 - [x] **Phase 1** — 6-band EQ + 感情自動制御
 - [x] **Phase 1.5** — Emotional Seascape (Calm / Golden / Storm)
-- [x] **Phase 2** — UI 大改修 (Studio / Listen / Watch 3 モード, パーティクル EEG, 神経網オーブ, リボン感情バー)
-- [x] **Phase 3** — Underwater シーン (HR 駆動の海中映像 3 段階)
-- [x] **Phase 3.5** — City サブビュー (HR シンクの色変化)
-- [x] **Phase 3.6** — スプラッシュ / オーディオメータ / カード hover popup / 品質ドット呼吸アニメ
-- [ ] **Phase 4** — CSV セッションリプレイ機能
-- [ ] **Phase 5** — 個人 EEG キャリブレーション (ML)
-- [ ] **Phase 6** — 1分デモ動画 + UI スクショ撮影 + Public 化
+- [x] **Phase 2** — UI 大改修 (Studio / Listen / Watch 3 モード)
+- [x] **Phase 3** — Underwater シーン (HR 駆動 3 段階)
+- [x] **Phase 3.5** — City + Forest サブビュー (動画 + HR シンク)
+- [x] **Phase 4** — CSV セッションリプレイ機能 (▶ Replay)
+- [x] **Phase 5** — UX 微調整層
+  - スプラッシュ / Toast 通知 / カード hover popup
+  - キーボードショートカット (`1/2/3/4` 文脈別)
+  - Settings ダイアログ / Welcome オーバーレイ / About
+  - 音量スライダ / カスタム accent ピッカー / hover preview
+  - REC タイマー / Audio glow / HR フラッシュ / Uptime
+  - F12 スクショ / F11 全画面 / 📷 Photo ボタン (Watch)
+  - マウス追従パーティクル / アイドルスクリーンセーバー
+  - カード drag-and-drop 並び替え
+- [ ] **Phase 6** — 個人 EEG キャリブレーション (ML)
+- [ ] **Phase 7** — 1分デモ動画 + Public 化
 
 ---
 
