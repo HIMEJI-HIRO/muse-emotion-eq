@@ -121,6 +121,9 @@ def schedule_captures(app, win):
         (lambda: sea and sea.set_sub_view("underwater"), 100),
         (go_underwater_high, 1500),
         (lambda: grab_window(win, "ui_watch_underwater_high.png"), 200),
+        # Forest
+        (lambda: sea and sea.set_sub_view("forest"), 1200),
+        (lambda: grab_window(win, "ui_watch_forest.png"), 200),
         (lambda: app.quit(), 0),
     ]
 

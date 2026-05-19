@@ -77,6 +77,7 @@ BG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                        "assets", "bg")
 IMAGE_CITY = os.path.join(BG_DIR, "bg_city.png")
 VIDEO_CITY = os.path.join(ASSETS_DIR, "sea_city.mp4")
+VIDEO_FOREST = os.path.join(ASSETS_DIR, "sea_forest.mp4")
 
 # 水中シーン HR 閾値 (ヒステリシス)
 HR_MID_ENTER = 75.0   # ≥ ここで low → mid
@@ -389,6 +390,14 @@ class SeaWidget(QWidget):
         self._city_available = (self._city_video is not None
                                  or self._city_image is not None)
 
+        # ===== Forest 背景 (動画) =====
+        self._forest_video = None
+        if os.path.exists(VIDEO_FOREST):
+            v = _VideoSource(VIDEO_FOREST)
+            if v.available:
+                self._forest_video = v
+        self._forest_available = self._forest_video is not None
+
         # ===== Underwater モード =====
         # サブビュー切替 ("surface" / "underwater" / "city")
         self._sub_view = "surface"
@@ -417,7 +426,8 @@ class SeaWidget(QWidget):
         self._sub_btns = {}
         for key, label in [("surface", "🌅 Surface"),
                             ("underwater", "🐳 Underwater"),
-                            ("city", "🌆 City")]:
+                            ("city", "🌆 City"),
+                            ("forest", "🌲 Forest")]:
             b = QPushButton(label)
             b.setCheckable(True)
             b.setCursor(Qt.PointingHandCursor)
@@ -428,7 +438,7 @@ class SeaWidget(QWidget):
         self._sub_btns["surface"].setChecked(True)
         h.addStretch()
         self._sub_btns_widget.move(8, 8)
-        self._sub_btns_widget.resize(360, 42)
+        self._sub_btns_widget.resize(460, 42)
         self._restyle_sub_btns()
         if not self._uw_available:
             self._sub_btns["underwater"].setEnabled(False)
@@ -437,7 +447,11 @@ class SeaWidget(QWidget):
         if not self._city_available:
             self._sub_btns["city"].setEnabled(False)
             self._sub_btns["city"].setToolTip(
-                "City 画像 (assets/bg/bg_city.png) が見つかりません")
+                "City 動画/画像 (sea_city.mp4 / bg_city.png) が見つかりません")
+        if not self._forest_available:
+            self._sub_btns["forest"].setEnabled(False)
+            self._sub_btns["forest"].setToolTip(
+                "Forest 動画 (sea_forest.mp4) が見つかりません")
         # シーン選択専用の slow EMA (描画用とは別系統)
         self._scene_a = 0.5
         self._scene_v = 0.5
@@ -502,11 +516,13 @@ class SeaWidget(QWidget):
         self._rings.append((time.monotonic(), float(strength)))
 
     def set_sub_view(self, name):
-        if name not in ("surface", "underwater", "city"):
+        if name not in ("surface", "underwater", "city", "forest"):
             return
         if name == "underwater" and not self._uw_available:
             return
         if name == "city" and not self._city_available:
+            return
+        if name == "forest" and not self._forest_available:
             return
         if name == self._sub_view:
             return
@@ -664,9 +680,14 @@ class SeaWidget(QWidget):
         self._bubbles = alive[:180]
 
         # 動画フレーム更新
-        if self._sub_view == "city":
+        if self._sub_view == "forest":
+            if self._forest_video is not None:
+                # Forest は静寂寄り: Engagement (集中) 高で少し速く
+                rate = 0.6 + self._c["engagement"] * 0.5
+                self._forest_video.set_rate(rate)
+                self._forest_video.update(now)
+        elif self._sub_view == "city":
             if self._city_video is not None:
-                # Arousal で速度可変
                 rate = 0.7 + self._c["arousal"] * 0.5
                 self._city_video.set_rate(rate)
                 self._city_video.update(now)
@@ -738,7 +759,9 @@ class SeaWidget(QWidget):
                 y = (h - draw_h) // 2
             qp.drawImage(QRectF(x, y, draw_w, draw_h), img)
 
-        if self._sub_view == "city" and self._city_available:
+        if self._sub_view == "forest" and self._forest_available:
+            self._draw_forest_frame(qp, w, h)
+        elif self._sub_view == "city" and self._city_available:
             self._draw_city_frame(qp, w, h)
         elif self._sub_view == "underwater" and self._uw_available:
             self._draw_underwater_frame(qp, w, h, now)
@@ -796,6 +819,41 @@ class SeaWidget(QWidget):
         qp.fillRect(QRectF(0, 0, w, h), vg)
 
         qp.end()
+
+    def _draw_forest_frame(self, qp, w, h):
+        """Forest モード: 動画 + 静かな tint (Engagement で柔らかさ調整)."""
+        if self._forest_video is None:
+            return
+        img = self._forest_video.image()
+        if img is None:
+            return
+        src_ratio = img.width() / max(1, img.height())
+        dst_ratio = w / max(1, h)
+        if src_ratio > dst_ratio:
+            draw_h = h
+            draw_w = int(draw_h * src_ratio)
+            x = (w - draw_w) // 2
+            y = 0
+        else:
+            draw_w = w
+            draw_h = int(draw_w / src_ratio)
+            x = 0
+            y = (h - draw_h) // 2
+        qp.drawImage(QRectF(x, y, draw_w, draw_h), img)
+
+        # Valence で tint: 低=寒色寄り / 高=暖色寄り
+        v = self._c["valence"]
+        if v > 0.5:
+            r = int(255)
+            g = int(220 + (v - 0.5) * 30)
+            b = int(180 + (v - 0.5) * 40)
+        else:
+            r = int(140 + v * 100)
+            g = int(200)
+            b = int(200 + (0.5 - v) * 30)
+        tint_alpha = int(20 + abs(v - 0.5) * 30)
+        qp.fillRect(QRectF(0, 0, w, h),
+                    QColor(r, g, b, tint_alpha))
 
     def _draw_city_frame(self, qp, w, h):
         """City モード: 動画 (or 静止画) + HR/PPG 同期の動的演出.
@@ -982,6 +1040,8 @@ class SeaWidget(QWidget):
             self._morph_source.release()
         if self._city_video is not None:
             self._city_video.release()
+        if self._forest_video is not None:
+            self._forest_video.release()
         for src in self._uw_sources.values():
             src.release()
         for src in self._sources.values():
