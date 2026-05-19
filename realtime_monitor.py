@@ -3929,31 +3929,56 @@ class MainWindow(QtWidgets.QMainWindow):
             for f in self.eq_bank.faders.values():
                 f.update()
 
+    MAX_TOASTS = 3
+
     def _show_toast(self, text, accent=None, duration_ms=2800):
-        """画面右下に通知トースト表示. 複数同時表示時は縦に積む."""
+        """画面右下に通知トースト表示.
+        - 同じ text が既に出てる場合: 古いほうを即消して上書き (連打対応)
+        - 最大 MAX_TOASTS 個まで. 超えたら一番古いのを消す.
+        """
         if accent is None:
             accent = self.theme.accent
+        if not hasattr(self, "_active_toasts"):
+            self._active_toasts = []
+
+        # 削除済み除去 + 重複 text を即消す
+        clean = []
+        for t in self._active_toasts:
+            try:
+                if t.parent() is None or not t.isVisible():
+                    continue
+                if getattr(t, "_text", "") == text:
+                    # 同じ内容 → 古いものを即消す
+                    t.hide()
+                    t.deleteLater()
+                    continue
+                clean.append(t)
+            except RuntimeError:
+                pass
+        self._active_toasts = clean
+
+        # 最大個数を超えていたら古いほうから捨てる
+        while len(self._active_toasts) >= self.MAX_TOASTS:
+            old = self._active_toasts.pop(0)
+            try:
+                old.hide()
+                old.deleteLater()
+            except RuntimeError:
+                pass
+
         toast = _Toast(self, text, accent=accent, duration_ms=duration_ms)
         toast.show()
         toast.raise_()
         toast.adjustSize()
+
         # 位置決定: 右下、既存トーストの上に積む
-        if not hasattr(self, "_active_toasts"):
-            self._active_toasts = []
-        # 不可視/削除済みトーストを除去 (RuntimeError 回避)
-        clean = []
-        for t in self._active_toasts:
-            try:
-                if t.isVisible() and t.parent() is not None:
-                    clean.append(t)
-            except RuntimeError:
-                # 既に C++ オブジェクト deleted
-                pass
-        self._active_toasts = clean
         margin = 20
         y_offset = margin
         for t in self._active_toasts:
-            y_offset += t.height() + 8
+            try:
+                y_offset += t.height() + 8
+            except RuntimeError:
+                pass
         x = self.width() - toast.width() - margin
         y = self.height() - toast.height() - y_offset
         toast.move(x, y)
