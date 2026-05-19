@@ -553,6 +553,290 @@ class _StatusMeter(QtWidgets.QWidget):
         qp.end()
 
 
+class _SettingsDialog(QtWidgets.QDialog):
+    """設定: HR 閾値 / EMA τ / Reverb 最大 wet 等のチューニング."""
+
+    def __init__(self, parent=None, theme=None):
+        super().__init__(parent)
+        self.setWindowTitle("⚙ Settings")
+        self.setMinimumWidth(420)
+        self._theme = theme
+        self._parent_app = parent
+        import sea_widget as sw
+        import eq_controllers as ec
+
+        layout = QtWidgets.QFormLayout(self)
+        layout.setVerticalSpacing(12)
+
+        # HR 閾値
+        self.hr_mid_enter = QtWidgets.QSpinBox()
+        self.hr_mid_enter.setRange(40, 120)
+        self.hr_mid_enter.setValue(int(sw.HR_MID_ENTER))
+        self.hr_mid_enter.setSuffix(" BPM")
+        layout.addRow("HR Mid enter ≥", self.hr_mid_enter)
+
+        self.hr_mid_exit = QtWidgets.QSpinBox()
+        self.hr_mid_exit.setRange(40, 120)
+        self.hr_mid_exit.setValue(int(sw.HR_MID_EXIT))
+        self.hr_mid_exit.setSuffix(" BPM")
+        layout.addRow("HR Mid exit ≤", self.hr_mid_exit)
+
+        self.hr_high_enter = QtWidgets.QSpinBox()
+        self.hr_high_enter.setRange(50, 160)
+        self.hr_high_enter.setValue(int(sw.HR_HIGH_ENTER))
+        self.hr_high_enter.setSuffix(" BPM")
+        layout.addRow("HR High enter ≥", self.hr_high_enter)
+
+        self.hr_high_exit = QtWidgets.QSpinBox()
+        self.hr_high_exit.setRange(50, 160)
+        self.hr_high_exit.setValue(int(sw.HR_HIGH_EXIT))
+        self.hr_high_exit.setSuffix(" BPM")
+        layout.addRow("HR High exit ≤", self.hr_high_exit)
+
+        # EMA τ
+        self.eq_alpha = QtWidgets.QDoubleSpinBox()
+        self.eq_alpha.setRange(0.001, 0.5)
+        self.eq_alpha.setSingleStep(0.001)
+        self.eq_alpha.setDecimals(3)
+        self.eq_alpha.setValue(ec.ALPHA_DEFAULT)
+        layout.addRow("EQ EMA α (small=遅い)", self.eq_alpha)
+
+        # EQ push interval
+        self.push_interval = QtWidgets.QDoubleSpinBox()
+        self.push_interval.setRange(0.02, 1.0)
+        self.push_interval.setSingleStep(0.01)
+        self.push_interval.setDecimals(2)
+        self.push_interval.setValue(ec.PUSH_MIN_INTERVAL_SEC)
+        self.push_interval.setSuffix(" s")
+        layout.addRow("EQ push min interval", self.push_interval)
+
+        # Reverb wet max
+        import audio_engine as ae
+        self.reverb_max = QtWidgets.QDoubleSpinBox()
+        self.reverb_max.setRange(0.0, 1.0)
+        self.reverb_max.setSingleStep(0.05)
+        self.reverb_max.setDecimals(2)
+        self.reverb_max.setValue(ae.REVERB_WET_MAX)
+        layout.addRow("Reverb wet max", self.reverb_max)
+
+        # Apply / Cancel
+        btns = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+        btns.accepted.connect(self._apply)
+        btns.rejected.connect(self.reject)
+        layout.addRow(btns)
+
+        # スタイル
+        accent = theme.accent if theme else "#1abc9c"
+        self.setStyleSheet(
+            "QDialog { background-color: #131318; color: #e8e8e8; }"
+            "QLabel { color: #c0c0c0; }"
+            "QSpinBox, QDoubleSpinBox { background-color: #1e1e22; "
+            "color: #f0f0f0; border: 1px solid #353539; border-radius: 4px; "
+            "padding: 3px 6px; min-width: 120px; }"
+            f"QPushButton {{ background-color: {accent}; color: #000; "
+            "border: none; border-radius: 6px; padding: 5px 16px; "
+            "font-weight: bold; }}"
+            f"QPushButton:hover {{ background-color: #ffffff; }}"
+        )
+
+    def _apply(self):
+        import sea_widget as sw
+        import eq_controllers as ec
+        import audio_engine as ae
+        sw.HR_MID_ENTER = float(self.hr_mid_enter.value())
+        sw.HR_MID_EXIT = float(self.hr_mid_exit.value())
+        sw.HR_HIGH_ENTER = float(self.hr_high_enter.value())
+        sw.HR_HIGH_EXIT = float(self.hr_high_exit.value())
+        ec.ALPHA_DEFAULT = float(self.eq_alpha.value())
+        ec.PUSH_MIN_INTERVAL_SEC = float(self.push_interval.value())
+        ae.REVERB_WET_MAX = float(self.reverb_max.value())
+        # ReflectController の現値も更新 (parent が MainWindow)
+        if self._parent_app is not None and hasattr(self._parent_app, "_reflect_ctrl"):
+            ctrl = self._parent_app._reflect_ctrl
+            ctrl.alpha = ec.ALPHA_DEFAULT
+            ctrl.push_interval = ec.PUSH_MIN_INTERVAL_SEC
+        self.accept()
+
+
+class _WelcomeOverlay(QtWidgets.QWidget):
+    """初回起動時のウェルカム + 機能ハイライト. 半透明 + 中央メッセージ."""
+
+    closed = QtCore.pyqtSignal()
+
+    def __init__(self, parent=None, accent="#1abc9c"):
+        super().__init__(parent)
+        self.setAttribute(QtCore.Qt.WA_StyledBackground, True)
+        self._accent = accent
+        # 中央パネル
+        lay = QtWidgets.QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setAlignment(QtCore.Qt.AlignCenter)
+        panel = QtWidgets.QFrame()
+        panel.setObjectName("welcome_panel")
+        panel.setFixedWidth(520)
+        pv = QtWidgets.QVBoxLayout(panel)
+        pv.setContentsMargins(36, 28, 36, 28)
+        pv.setSpacing(14)
+
+        title = QtWidgets.QLabel("🧠  Welcome to EEG Adaptive EQ")
+        title.setObjectName("welcome_title")
+        title.setAlignment(QtCore.Qt.AlignCenter)
+        sub = QtWidgets.QLabel(
+            "Your brain controls your music.<br>"
+            "Real-time EEG / PPG → audio + visuals.")
+        sub.setObjectName("welcome_sub")
+        sub.setAlignment(QtCore.Qt.AlignCenter)
+        sub.setTextFormat(QtCore.Qt.RichText)
+        sub.setWordWrap(True)
+
+        sep = QtWidgets.QFrame()
+        sep.setFrameShape(QtWidgets.QFrame.HLine)
+        sep.setStyleSheet(f"background-color: {accent}; max-height: 1px;")
+
+        tips = QtWidgets.QLabel(
+            "<table cellspacing=6>"
+            "<tr><td><b>1 / 2 / 3</b></td>"
+            "<td>🧠 Studio  /  🎚 Listen  /  🌊 Watch</td></tr>"
+            "<tr><td><b>Space</b></td>"
+            "<td>♪ Audio ON/OFF</td></tr>"
+            "<tr><td><b>R</b></td><td>● Toggle REC</td></tr>"
+            "<tr><td><b>F1</b></td><td>Show shortcuts</td></tr>"
+            "<tr><td>&nbsp;</td><td>&nbsp;</td></tr>"
+            "<tr><td>📡</td>"
+            "<td>Mind Monitor → OSC :5000 で接続</td></tr>"
+            "<tr><td>🎵</td>"
+            "<td>Spotify → VB-CABLE → EQ → 出力</td></tr>"
+            "</table>")
+        tips.setObjectName("welcome_tips")
+        tips.setTextFormat(QtCore.Qt.RichText)
+
+        btn_row = QtWidgets.QHBoxLayout()
+        btn_row.addStretch()
+        ok = QtWidgets.QPushButton("Got it  →")
+        ok.setObjectName("welcome_ok")
+        ok.setCursor(QtCore.Qt.PointingHandCursor)
+        ok.setFixedHeight(36)
+        ok.clicked.connect(self._on_close)
+        btn_row.addWidget(ok)
+        btn_row.addStretch()
+
+        pv.addWidget(title)
+        pv.addWidget(sub)
+        pv.addWidget(sep)
+        pv.addWidget(tips)
+        pv.addLayout(btn_row)
+
+        lay.addWidget(panel)
+        self._panel = panel
+        self._restyle()
+
+    def _restyle(self):
+        accent = self._accent
+        self.setStyleSheet(
+            "_WelcomeOverlay { background-color: rgba(0, 0, 0, 180); }"
+            f"QFrame#welcome_panel {{ background-color: rgba(10, 10, 16, 250); "
+            f"border: 2px solid {accent}; border-radius: 14px; }}"
+            f"QLabel#welcome_title {{ color: {accent}; font-size: 20px; "
+            "font-weight: bold; letter-spacing: 1px; "
+            "background: transparent; border: none; }"
+            "QLabel#welcome_sub { color: #d0d0d0; font-size: 13px; "
+            "background: transparent; border: none; line-height: 1.5; }"
+            "QLabel#welcome_tips { color: #c0c0c0; font-size: 12px; "
+            "background: transparent; border: none; }"
+            f"QPushButton#welcome_ok {{ background-color: {accent}; "
+            "color: #000000; border: none; border-radius: 18px; "
+            "padding: 6px 24px; font-size: 12px; font-weight: bold; "
+            "letter-spacing: 1px; }}"
+            f"QPushButton#welcome_ok:hover {{ background-color: #ffffff; }}"
+        )
+        # accent glow on panel
+        eff = QtWidgets.QGraphicsDropShadowEffect(self._panel)
+        eff.setBlurRadius(40)
+        eff.setOffset(0, 0)
+        ar, ag, ab = (QtGui.QColor(accent).red(),
+                       QtGui.QColor(accent).green(),
+                       QtGui.QColor(accent).blue())
+        eff.setColor(QtGui.QColor(ar, ag, ab, 220))
+        self._panel.setGraphicsEffect(eff)
+
+    def _on_close(self):
+        # フェードアウト
+        try:
+            eff = QtWidgets.QGraphicsOpacityEffect(self)
+            self.setGraphicsEffect(eff)
+            eff.setOpacity(1.0)
+            anim = QtCore.QPropertyAnimation(eff, b"opacity", self)
+            anim.setDuration(280)
+            anim.setStartValue(1.0)
+            anim.setEndValue(0.0)
+            anim.finished.connect(self._finish)
+            anim.start(QtCore.QAbstractAnimation.DeleteWhenStopped)
+        except Exception:
+            self._finish()
+
+    def _finish(self):
+        self.closed.emit()
+        self.deleteLater()
+
+    def resizeEvent(self, event):
+        # 親の上に重ねるためフルサイズ
+        if self.parent() is not None:
+            self.setGeometry(self.parent().rect())
+        super().resizeEvent(event)
+
+
+class _Toast(QtWidgets.QFrame):
+    """画面右下に出る通知トースト. accent neon border + 自動フェードアウト."""
+
+    def __init__(self, parent, text, accent="#1abc9c", duration_ms=2800):
+        super().__init__(parent)
+        self.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents, True)
+        self.setObjectName("toast")
+        self._text = text
+        self._accent = accent
+        lay = QtWidgets.QHBoxLayout(self)
+        lay.setContentsMargins(14, 10, 16, 10)
+        lay.setSpacing(10)
+        self._label = QtWidgets.QLabel(text)
+        self._label.setObjectName("toast_label")
+        lay.addWidget(self._label)
+        self.adjustSize()
+        # スタイル
+        self.setStyleSheet(
+            f"QFrame#toast {{ background-color: rgba(8, 8, 14, 235); "
+            f"border: 1.5px solid {accent}; border-radius: 10px; }}"
+            f"QLabel#toast_label {{ color: #ffffff; font-size: 12px; "
+            "font-weight: 500; letter-spacing: 0.5px; "
+            "background: transparent; border: none; }"
+        )
+        # DropShadow accent
+        eff = QtWidgets.QGraphicsDropShadowEffect(self)
+        eff.setBlurRadius(28)
+        eff.setOffset(0, 4)
+        ar, ag, ab = (QtGui.QColor(accent).red(),
+                       QtGui.QColor(accent).green(),
+                       QtGui.QColor(accent).blue())
+        eff.setColor(QtGui.QColor(ar, ag, ab, 220))
+        self.setGraphicsEffect(eff)
+        # 自動フェードアウト
+        QtCore.QTimer.singleShot(duration_ms, self._fade_out)
+
+    def _fade_out(self):
+        try:
+            eff = QtWidgets.QGraphicsOpacityEffect(self)
+            self.setGraphicsEffect(eff)
+            eff.setOpacity(1.0)
+            anim = QtCore.QPropertyAnimation(eff, b"opacity", self)
+            anim.setDuration(280)
+            anim.setStartValue(1.0)
+            anim.setEndValue(0.0)
+            anim.finished.connect(self.deleteLater)
+            anim.start(QtCore.QAbstractAnimation.DeleteWhenStopped)
+        except Exception:
+            self.deleteLater()
+
+
 class SplashScreen(QtWidgets.QWidget):
     """起動時スプラッシュ. 回路パターン + neon タイトル + プログレスバー."""
 
@@ -2324,6 +2608,49 @@ class MainWindow(QtWidgets.QMainWindow):
         self.esc_sc = QtWidgets.QShortcut(QtGui.QKeySequence("Esc"), self)
         self.esc_sc.activated.connect(self._restore_if_focused)
 
+        # キーボードショートカット
+        QtWidgets.QShortcut(QtGui.QKeySequence("1"), self,
+                            activated=lambda: self._set_mode("studio"))
+        QtWidgets.QShortcut(QtGui.QKeySequence("2"), self,
+                            activated=lambda: self._set_mode("listen"))
+        QtWidgets.QShortcut(QtGui.QKeySequence("3"), self,
+                            activated=lambda: self._set_mode("watch"))
+        QtWidgets.QShortcut(QtGui.QKeySequence("Space"), self,
+                            activated=self._toggle_audio)
+        QtWidgets.QShortcut(QtGui.QKeySequence("R"), self,
+                            activated=self._toggle_recording)
+        QtWidgets.QShortcut(QtGui.QKeySequence("F1"), self,
+                            activated=self._show_help)
+
+        # REC 脈動アニメ用 phase
+        self._rec_pulse_phase = 0.0
+        self._rec_pulse_timer = QtCore.QTimer(self)
+        self._rec_pulse_timer.timeout.connect(self._rec_pulse_tick)
+        self._rec_pulse_timer.start(80)
+
+        # 初回起動時のみ Welcome オーバーレイ
+        QtCore.QTimer.singleShot(400, self._maybe_show_welcome)
+
+    def _welcome_flag_path(self):
+        from pathlib import Path
+        d = Path.home() / ".muse_eq"
+        d.mkdir(parents=True, exist_ok=True)
+        return d / "welcome_seen.flag"
+
+    def _maybe_show_welcome(self):
+        flag = self._welcome_flag_path()
+        if flag.exists():
+            return
+        try:
+            w = _WelcomeOverlay(self.centralWidget(), accent=self.theme.accent)
+            w.setGeometry(self.centralWidget().rect())
+            w.show()
+            w.raise_()
+            w.closed.connect(lambda: flag.write_text("seen\n"))
+            self._welcome_overlay = w
+        except Exception as e:
+            print("[welcome] error:", e)
+
     # --- Focus ---
     def toggle_focus(self, card_id):
         if self.focused_card == card_id:
@@ -2473,6 +2800,24 @@ class MainWindow(QtWidgets.QMainWindow):
         self.rec_btn.clicked.connect(self._toggle_recording)
         self.rec_btn.setToolTip("クリックで録画開始 / 停止")
         row1.addWidget(self.rec_btn)
+
+        # 設定ボタン (歯車)
+        self.settings_btn = QtWidgets.QPushButton("⚙")
+        self.settings_btn.setCursor(QtCore.Qt.PointingHandCursor)
+        self.settings_btn.setFixedSize(28, 28)
+        self.settings_btn.setStyleSheet(
+            "QPushButton { background-color: transparent; color: #c0c0c0; "
+            "border: 1px solid #3a3a3a; border-radius: 14px; "
+            "font-size: 14px; }"
+            f"QPushButton:hover {{ background-color: rgba("
+            f"{QtGui.QColor(self.theme.accent).red()},"
+            f"{QtGui.QColor(self.theme.accent).green()},"
+            f"{QtGui.QColor(self.theme.accent).blue()},60); "
+            f"border-color: {self.theme.accent}; color: #fff; }}"
+        )
+        self.settings_btn.setToolTip("⚙ Settings  (HR thresholds / EMA)")
+        self.settings_btn.clicked.connect(self._open_settings)
+        row1.addWidget(self.settings_btn)
 
         # オーディオレベルメータ
         self.audio_level_meter = _StatusMeter()
@@ -3357,6 +3702,72 @@ class MainWindow(QtWidgets.QMainWindow):
             for f in self.eq_bank.faders.values():
                 f.update()
 
+    def _show_toast(self, text, accent=None, duration_ms=2800):
+        """画面右下に通知トースト表示. 複数同時表示時は縦に積む."""
+        if accent is None:
+            accent = self.theme.accent
+        toast = _Toast(self, text, accent=accent, duration_ms=duration_ms)
+        toast.show()
+        toast.raise_()
+        toast.adjustSize()
+        # 位置決定: 右下、既存トーストの上に積む
+        if not hasattr(self, "_active_toasts"):
+            self._active_toasts = []
+        # 不可視のトーストを除去
+        self._active_toasts = [t for t in self._active_toasts
+                                if t.isVisible() and not t.parent() is None]
+        margin = 20
+        y_offset = margin
+        for t in self._active_toasts:
+            y_offset += t.height() + 8
+        x = self.width() - toast.width() - margin
+        y = self.height() - toast.height() - y_offset
+        toast.move(x, y)
+        self._active_toasts.append(toast)
+
+    def _rec_pulse_tick(self):
+        """REC ボタンを録画中に呼吸させる."""
+        import math as _m
+        if not self.recording:
+            return
+        self._rec_pulse_phase = (self._rec_pulse_phase + 0.15) % (2 * _m.pi)
+        pulse = 0.55 + 0.45 * (0.5 + 0.5 * _m.sin(self._rec_pulse_phase))
+        # 赤色の透明度を脈動 + わずかに background 色も
+        r = int(231 * pulse + 80 * (1 - pulse))
+        g = int(76 * pulse + 20 * (1 - pulse))
+        b = int(60 * pulse + 20 * (1 - pulse))
+        self.rec_btn.setStyleSheet(
+            f"QPushButton {{ background-color: rgb({r},{g},{b}); "
+            f"color: #ffffff; border: 1px solid rgb({r},{g},{b}); "
+            "border-radius: 13px; padding: 3px 14px; "
+            "font-size: 11px; font-weight: 600; }}"
+        )
+
+    def _open_settings(self):
+        dlg = _SettingsDialog(self, theme=self.theme)
+        if dlg.exec_() == QtWidgets.QDialog.Accepted:
+            self._show_toast("⚙ Settings applied")
+
+    def _show_help(self):
+        """F1 で表示するキーボードショートカット一覧."""
+        msg = QtWidgets.QMessageBox(self)
+        msg.setWindowTitle("Keyboard Shortcuts")
+        msg.setTextFormat(QtCore.Qt.RichText)
+        msg.setText(
+            "<h3>⌨ Keyboard Shortcuts</h3>"
+            "<table cellspacing=8>"
+            "<tr><td><b>1</b></td><td>🧠 Studio mode</td></tr>"
+            "<tr><td><b>2</b></td><td>🎚 Listen mode</td></tr>"
+            "<tr><td><b>3</b></td><td>🌊 Watch mode</td></tr>"
+            "<tr><td><b>Space</b></td><td>♪ Audio ON/OFF</td></tr>"
+            "<tr><td><b>R</b></td><td>● Toggle REC</td></tr>"
+            "<tr><td><b>Esc</b></td><td>Restore from focused card</td></tr>"
+            "<tr><td><b>F1</b></td><td>Show this help</td></tr>"
+            "</table>"
+        )
+        msg.setStandardButtons(QtWidgets.QMessageBox.Ok)
+        msg.exec_()
+
     # ---- Mode 切替 (Studio / Listen / Watch) ----
     def _update_mode_btn_style(self):
         t = self.theme
@@ -3461,6 +3872,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if mode == "listen":
             self.stack.setCurrentWidget(self.listen_page)
             self._animate_mode_fade(self.listen_page)
+            self._show_toast("🎚 LISTEN mode")
             return
 
         # Watch → Sea ウィジェットを watch_page に reparent
@@ -3477,6 +3889,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.stack.setCurrentWidget(self.watch_page)
             self._watch_hud.raise_()
             self._animate_mode_fade(self.watch_page)
+            self._show_toast("🌊 WATCH mode")
         else:
             if sea_widget is not None and hasattr(self, "eq_stack"):
                 if self.eq_stack.indexOf(sea_widget) < 0:
@@ -3485,6 +3898,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.stack.setCurrentWidget(self.grid_page)
             self._apply_card_visibility(mode)
             self._animate_mode_fade(self.grid_page)
+            self._show_toast("🧠 STUDIO mode")
 
     def _apply_card_visibility(self, mode):
         if mode == "studio":
@@ -4104,6 +4518,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.audio_status.setStyleSheet(
                 "font-size: 11px; color: #8a8a8a; margin-left: 8px;")
             print("[Audio] stopped")
+            self._show_toast("♪ Audio OFF", accent="#8a8a8a")
         else:
             out_idx = self.audio_out_selector.currentData()
             ok = self.audio.start(output_index=out_idx)
@@ -4116,11 +4531,15 @@ class MainWindow(QtWidgets.QMainWindow):
                     "font-size: 11px; color: #1abc9c; margin-left: 8px;")
                 print(f"[Audio] started: {self.audio.input_name}"
                       f"  →  {self.audio.output_name}")
+                self._show_toast(f"♪ Audio ON  →  {short_out}")
             else:
                 self.audio_status.setText(f"⚠ {self.audio.last_error}")
                 self.audio_status.setStyleSheet(
                     "font-size: 11px; color: #e74c3c; margin-left: 8px;")
                 print(f"[Audio] start failed: {self.audio.last_error}")
+                self._show_toast(
+                    f"⚠ Audio error: {self.audio.last_error[:40]}",
+                    accent="#e74c3c", duration_ms=4000)
 
     def _rec_btn_style(self, recording):
         if recording:
@@ -4169,8 +4588,11 @@ class MainWindow(QtWidgets.QMainWindow):
             self.rec_status.setStyleSheet(
                 "font-size: 11px; color: #e74c3c; margin-left: 10px; "
                 "margin-right: 10px; font-weight: bold;")
+            self._show_toast(f"● Recording started: {fname}",
+                              accent="#e74c3c")
         except Exception as e:
             self.rec_status.setText(f"録画開始失敗: {e}")
+            self._show_toast(f"⚠ REC failed: {e}", accent="#e74c3c")
 
     def _stop_recording(self):
         self.recording = False
@@ -4190,6 +4612,9 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         self.rec_status.setStyleSheet(
             "font-size: 11px; color: #2ecc71; margin-left: 10px; margin-right: 10px;")
+        self._show_toast(
+            f"✓ Saved {self.rec_row_count} rows  ({dur:.1f}s)",
+            accent="#2ecc71")
 
     def _write_csv_row(self, eeg_data, bands, quality, touching, blink, jaw,
                        rus, eng, ar, hr_osc):
