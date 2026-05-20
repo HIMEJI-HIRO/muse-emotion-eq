@@ -7,7 +7,7 @@ mp4_to_gif.py
     python scripts/mp4_to_gif.py <input.mp4> [--start 5] [--end 15] [--width 720] [--fps 12]
 
 例:
-    python scripts/mp4_to_gif.py "C:/Users/hiro2/Videos/Captures/demo.mp4" \\
+    python scripts/mp4_to_gif.py path/to/demo.mp4 \\
         --start 5 --end 15 --width 720 --fps 12
 """
 import argparse
