@@ -17,7 +17,7 @@ Muse S Athena の EEG / PPG から感情を推定し、
 
 <br>
 
-<img src="docs/images/ui_watch_surface.png" width="780" alt="Watch mode hero">
+<img src="demo/demo_hero.gif" width="720" alt="Cinematic intro · EEG-driven audio + visuals">
 
 <br>
 
