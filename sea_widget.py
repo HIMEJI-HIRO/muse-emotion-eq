@@ -127,7 +127,9 @@ class _VideoSource:
     # 先頭フレーム (seam image) を上に重ねて jump cut を隠す.
     SEAM_FADE_SEC = 0.6
 
-    def __init__(self, path):
+    def __init__(self, path, loop_start=None, loop_end=None):
+        """loop_start / loop_end (秒) を指定すると、その区間内だけループ.
+        Veo 生成動画でイントロやアウトロに空フレームがある場合に有効."""
         self.path = path
         self.available = HAS_CV2 and os.path.exists(path)
         self._cap = None
@@ -137,8 +139,13 @@ class _VideoSource:
         self._last_grab = 0.0
         self._cur_image = None
         self._rate = 1.0
-        # ループ境界 jump cut 隠蔽用: 先頭フレームをキャッシュ
+        # ループ範囲 (None なら動画全体)
+        self._loop_start = loop_start
+        self._loop_end = loop_end
+        # ループ境界 jump cut 隠蔽用: ループ start のフレームをキャッシュ
         self._seam_image = None
+        # seam blend を使うか (デフォルト False に: 空フレームと重なる事故防止)
+        self._seam_blend_enabled = False
         if self.available:
             self._open()
 
@@ -159,30 +166,43 @@ class _VideoSource:
     def set_rate(self, rate):
         self._rate = max(0.1, min(3.0, float(rate)))
 
+    def _loop_wrap_seconds(self):
+        """ループ範囲 (start, end). 未指定なら動画全体."""
+        start = self._loop_start if self._loop_start is not None else 0.0
+        end = (self._loop_end if self._loop_end is not None
+               else self._duration)
+        return start, end
+
     def update(self, now):
-        """通常再生モード: 経過時間で次フレーム読み込み."""
+        """通常再生モード: 経過時間で次フレーム読み込み.
+        loop_start / loop_end を指定していると、その区間内でだけループ."""
         if not self.available or self._cap is None:
             return
         interval = self._frame_interval / self._rate
         if (now - self._last_grab) < interval:
             return
+        loop_start, loop_end = self._loop_wrap_seconds()
         try:
             with _suppress_stderr():
+                # loop_end を超えていたら手動で loop_start に seek
+                if (loop_end > 0
+                        and self._cur_video_time >= loop_end - self._frame_interval):
+                    self._cap.set(cv2.CAP_PROP_POS_FRAMES,
+                                  int(loop_start * self._fps))
+                    self._cur_video_time = loop_start
                 ok, frame = self._cap.read()
                 if not ok:
-                    self._cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    # 物理的な末尾に当たった場合も loop_start に
+                    self._cap.set(cv2.CAP_PROP_POS_FRAMES,
+                                  int(loop_start * self._fps))
+                    self._cur_video_time = loop_start
                     ok, frame = self._cap.read()
         except Exception:
             ok, frame = False, None
         if not ok:
             return
         self._set_image(frame)
-        # 最初に成功した read を seam image として保持 (loop 末尾でブレンドに使う)
-        if self._seam_image is None and self._cur_image is not None:
-            self._seam_image = QImage(self._cur_image)   # deep copy
         self._cur_video_time += self._frame_interval
-        if self._duration > 0 and self._cur_video_time >= self._duration:
-            self._cur_video_time = 0.0
         self._last_grab = now
 
     def seek_to(self, t_sec):
@@ -223,15 +243,18 @@ class _VideoSource:
         return self._seam_image
 
     def seam_blend_factor(self):
-        """現在の再生位置がループ末尾近くなら 0..1 の不透明度を返す.
-        update() で _cur_video_time が duration を超えた瞬間に 0 にリセット
-        されるので、戻ったあとは自動的に 0 になる."""
+        """seam blend が無効なら 0.0 を返す (デフォルト).
+        有効時は loop_end までの残り時間で 0..1 の不透明度を smoothstep."""
+        if not self._seam_blend_enabled:
+            return 0.0
         if self._duration <= 0 or self._seam_image is None:
             return 0.0
-        remaining = self._duration - self._cur_video_time
+        _, loop_end = self._loop_wrap_seconds()
+        if loop_end <= 0:
+            return 0.0
+        remaining = loop_end - self._cur_video_time
         if remaining >= self.SEAM_FADE_SEC:
             return 0.0
-        # 0..1 で滑らかに上げる (smoothstep)
         u = max(0.0, min(1.0, 1.0 - (remaining / self.SEAM_FADE_SEC)))
         return u * u * (3.0 - 2.0 * u)
 
@@ -441,16 +464,18 @@ class SeaWidget(QWidget):
         #   "low"  -> sea_underwater_mid.mp4  (サンゴ礁 + 魚群 = 平常)
         #   "high" -> sea_underwater_high.mp4 (ジンベエザメ = 興奮)
         # ※ sea_underwater_low.mp4 (空っぽの水中) は今後使わない.
-        uw_warmup = {
-            "low": 2.0,    # サンゴ礁: 2秒目で魚群密度ピーク
-            "high": 3.0,   # ジンベエ: 3秒目でジンベエが画面中央寄り
+        # 各動画の「subject (魚/ジンベエ) が映ってる区間」を loop window で
+        # 指定. Veo 8 秒生成は冒頭/末尾に空フレームが入りがちなので
+        # その範囲を回避する.
+        uw_config = {
+            # name -> (file_path, loop_start_sec, loop_end_sec, warmup_sec)
+            "low":  (VIDEO_UNDERWATER_MID,  0.5, 7.5, 2.0),
+            "high": (VIDEO_UNDERWATER_HIGH, 1.5, 7.0, 3.0),
         }
-        for name, path in [("low", VIDEO_UNDERWATER_MID),
-                             ("high", VIDEO_UNDERWATER_HIGH)]:
-            src = _VideoSource(path)
+        for name, (path, ls, le, warm) in uw_config.items():
+            src = _VideoSource(path, loop_start=ls, loop_end=le)
             if src.available:
-                # 中盤フレームへシーク (空フレーム回避)
-                src.seek_to(uw_warmup.get(name, 2.0))
+                src.seek_to(warm)
                 self._uw_sources[name] = src
         self._uw_available = bool(self._uw_sources)
         self._uw_current = "low"
