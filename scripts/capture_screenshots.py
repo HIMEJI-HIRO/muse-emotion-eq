@@ -4,6 +4,12 @@ capture_screenshots.py
 アプリを起動して各モード/サブビューのスクショを自動撮影し、
 docs/images/ に保存する.
 
+最新構成 (2026-05):
+    - 3 モード: Studio / Listen / Watch
+    - Watch サブビュー: Surface (EEG) / Underwater (HR) の 2 種類
+    - Underwater: LOW (サンゴ礁 + 魚) / HIGH (ジンベエザメ) の 2 ゾーン
+    - Demo モード: 右側に説明パネル付き
+
 実行:
     python scripts/capture_screenshots.py
 """
@@ -28,27 +34,25 @@ os.makedirs(OUT_DIR, exist_ok=True)
 def inject_demo_state():
     """OSC が来ないので、それっぽい値を state に注入."""
     rng = np.random.default_rng(7)
-    # 4ch EEG: ノイズ波形 + α 波 (10 Hz サイン)
     t = np.linspace(0, 5, rm.BUF_LEN)
     base = (
-        20 * np.sin(2 * np.pi * 10 * t)   # α 波
-        + 12 * np.sin(2 * np.pi * 2.5 * t)  # δ-θ 帯
-        + 6 * np.sin(2 * np.pi * 20 * t)   # β 波
+        20 * np.sin(2 * np.pi * 10 * t)        # α 波
+        + 12 * np.sin(2 * np.pi * 2.5 * t)     # δ-θ 帯
+        + 6 * np.sin(2 * np.pi * 20 * t)       # β 波
     )
     for i in range(4):
         wave = base + rng.normal(0, 4, size=rm.BUF_LEN)
-        wave += rng.normal(0, 2)   # ch ごとのオフセット
+        wave += rng.normal(0, 2)
         rm.state.eeg_buf[i].clear()
         rm.state.eeg_buf[i].extend(wave.tolist())
 
-    # Band Power: Alpha 高め
     rm.state.bands["delta"] = [0.6, 0.5, 0.55, 0.62]
     rm.state.bands["theta"] = [0.9, 0.85, 0.95, 0.92]
     rm.state.bands["alpha"] = [1.6, 1.7, 1.65, 1.55]
     rm.state.bands["beta"]  = [1.2, 1.15, 1.25, 1.18]
     rm.state.bands["gamma"] = [0.7, 0.65, 0.72, 0.68]
 
-    rm.state.quality = [1.0, 1.0, 1.0, 2.0]   # 全部 Good (1ch だけ OK)
+    rm.state.quality = [1.0, 1.0, 1.0, 2.0]
     rm.state.touching = 1
     rm.state.blink = 0
     rm.state.jaw = 0
@@ -57,14 +61,12 @@ def inject_demo_state():
     rm.state.heart_rate = 72.0
     rm.state.last_ppg_time = time.time()
     rm.state.last_optics_time = time.time()
-    # PPG / fNIRS バッファ
     for buf in rm.state.optics_buf:
         buf.clear()
         buf.extend(rng.normal(0, 0.001, size=rm.PPG_BUF_LEN).tolist())
 
 
 def grab_window(win, out_name):
-    """ウィンドウ全体を PNG 保存."""
     QtWidgets.QApplication.processEvents()
     time.sleep(0.05)
     QtWidgets.QApplication.processEvents()
@@ -75,15 +77,15 @@ def grab_window(win, out_name):
 
 
 def schedule_captures(app, win):
-    """モードを切り替えながら順次キャプチャ. チェーン方式で順序保証."""
     sea = getattr(win, "sea_widget", None)
 
-    def _force_uw_scene(scene_name, target_frame=160):
+    def _force_uw_scene(scene_name, target_frame=160, hr=100):
+        """Underwater サブビューを強制的に指定 scene にして表示."""
         import cv2
         if sea is None:
             return
         sea.set_sub_view("underwater")
-        sea._hr_ema = {"low": 60, "mid": 80, "high": 100}.get(scene_name, 80)
+        sea._hr_ema = hr
         sea._uw_current = scene_name
         sea._uw_target = scene_name
         sea._uw_fading = False
@@ -97,33 +99,48 @@ def schedule_captures(app, win):
             except Exception as e:
                 print(f"[uw seek {scene_name}]", e)
 
-    def go_underwater():
-        _force_uw_scene("mid", 160)
+    def show_underwater_low():   # サンゴ礁 + 魚
+        _force_uw_scene("low", 60, hr=65)
 
-    def go_underwater_high():
-        _force_uw_scene("high", 140)
+    def show_underwater_high():  # ジンベエザメ
+        _force_uw_scene("high", 90, hr=98)
+
+    def turn_on_demo():
+        """Demo モードを ON にして説明パネルを表示."""
+        if hasattr(win, "_watch_toggle_demo"):
+            win._watch_toggle_demo()
+            # デモ tick を 1 回回して状態セット
+            QtWidgets.QApplication.processEvents()
+
+    def turn_off_demo():
+        if (hasattr(win, "_watch_demo_active") and
+                win._watch_demo_active and
+                hasattr(win, "_watch_toggle_demo")):
+            win._watch_toggle_demo()
 
     # (action, delay_after_ms)
     plan = [
-        (lambda: None, 1200),                              # 初期安定待ち
-        (lambda: win._set_mode("studio"), 1000),
+        (lambda: None, 1500),                              # 起動安定待ち
+        # ===== Studio =====
+        (lambda: win._set_mode("studio"), 1200),
         (lambda: grab_window(win, "ui_studio.png"), 200),
-        (lambda: win._set_mode("listen"), 1200),
+        # ===== Listen =====
+        (lambda: win._set_mode("listen"), 1400),
         (lambda: grab_window(win, "ui_listen.png"), 200),
-        (lambda: win._set_mode("watch"), 600),
-        (lambda: sea and sea.set_sub_view("surface"), 1200),
+        # ===== Watch / Surface =====
+        (lambda: win._set_mode("watch"), 800),
+        (lambda: sea and sea.set_sub_view("surface"), 1400),
         (lambda: grab_window(win, "ui_watch_surface.png"), 200),
-        (go_underwater, 1500),
-        (lambda: grab_window(win, "ui_watch_underwater.png"), 200),
-        (lambda: sea and sea.set_sub_view("city"), 1000),
-        (lambda: grab_window(win, "ui_watch_city.png"), 200),
-        # Underwater HIGH (whale shark + manta)
-        (lambda: sea and sea.set_sub_view("underwater"), 100),
-        (go_underwater_high, 1500),
+        # ===== Watch / Underwater LOW (Coral reef + fish) =====
+        (show_underwater_low, 1500),
+        (lambda: grab_window(win, "ui_watch_underwater_low.png"), 200),
+        # ===== Watch / Underwater HIGH (Whale shark) =====
+        (show_underwater_high, 1500),
         (lambda: grab_window(win, "ui_watch_underwater_high.png"), 200),
-        # Forest
-        (lambda: sea and sea.set_sub_view("forest"), 1200),
-        (lambda: grab_window(win, "ui_watch_forest.png"), 200),
+        # ===== Watch / Demo mode (with right-side explainer panel) =====
+        (turn_on_demo, 1500),
+        (lambda: grab_window(win, "ui_watch_demo.png"), 200),
+        (turn_off_demo, 400),
         (lambda: app.quit(), 0),
     ]
 
@@ -144,11 +161,10 @@ def schedule_captures(app, win):
 
 
 def main():
-    # OSC 受信は不要 (state を直接いじる) ので起動しない
     app = QtWidgets.QApplication(sys.argv)
     inject_demo_state()
     win = rm.MainWindow()
-    win.resize(2200, 1400)   # 大きめに (Studio の詰まり感解消)
+    win.resize(2200, 1400)
     win.show()
     schedule_captures(app, win)
     sys.exit(app.exec_())

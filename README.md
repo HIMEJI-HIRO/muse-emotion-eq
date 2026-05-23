@@ -88,7 +88,26 @@ Muse S Athena の EEG / PPG から感情を推定し、
 </tr>
 </table>
 
+### Underwater — 2 Zones with hysteresis
+
+<table>
+<tr>
+<td align="center" width="50%">
+<img src="docs/images/ui_watch_underwater_low.png" alt="Coral reef (LOW zone)"><br>
+<b>🐠 LOW zone  ·  &lt; 82 BPM</b><br>
+<sub>サンゴ礁を魚たちが泳ぐ平常状態. 安静ベースライン.</sub>
+</td>
+<td align="center" width="50%">
+<img src="docs/images/ui_watch_underwater_high.png" alt="Whale shark (HIGH zone)"><br>
+<b>🐋 HIGH zone  ·  ≥ 82 BPM</b><br>
+<sub>ジンベエザメが画面を泳ぐ. 興奮 / 軽い身体活動状態.</sub>
+</td>
+</tr>
+</table>
+
 ### ▶ Demo Mode (no headset required)
+
+<img src="docs/images/ui_watch_demo.png" alt="Demo mode with right-side explainer" width="100%">
 
 Watch 右上の **`▶ Demo`** ボタンで起動. 60 秒ループで EEG/HR を**滑らかに連続変化**させて、
 ヘッドセットを持っていない人にも「どの数値がどの画面要素を動かすか」を体験させられる:
@@ -97,13 +116,23 @@ Watch 右上の **`▶ Demo`** ボタンで起動. 60 秒ループで EEG/HR を
 0s ────────── 30s ────────── 60s
 🧠 Surface (EEG)                    ♥ Underwater (HR)
 CALM → RISING → INTENSE → STORMY    🐠 サンゴ礁 → 🐋 ジンベエ → 🐠 サンゴ礁
-A: 0.30 → 0.72                      BPM: 65 → 92 → 65
-V: 0.62 → 0.32                      zone: LOW → HIGH (14s) → LOW
+A: 0.30 → 0.72                      BPM: 65 → 96 → 65
+V: 0.62 → 0.32                      zone: LOW 12.7s / HIGH 17.3s
 E: 0.42 → 0.62
 ```
 
 **右側の説明パネル** がリアルタイムでメータを動かし、現在の phase / 駆動源 / "何が起きているか" を
-日本語で解説します. デモ動画録画にもそのまま使えるよう設計.
+日本語で解説. デモ動画録画にもそのまま使えるよう設計:
+
+| 要素 | 中身 |
+|---|---|
+| ヘッダー | `▶ DEMO MODE` + 経過秒数 |
+| Phase ピル | `PHASE · STORMY` (色: EEG 紫 / HR 赤) |
+| 進捗バー | 60 秒サイクル内の現在位置 |
+| EEG セクション | Arousal / Valence / Engagement の横バー + 数値 |
+| HR セクション | BPM 横バー + Zone (🐠 LOW / 🐋 HIGH) |
+| What's happening | phase 別の日本語ナレーション |
+| Timeline | 5 phase インジケータ (現在地ハイライト) |
 
 ---
 
