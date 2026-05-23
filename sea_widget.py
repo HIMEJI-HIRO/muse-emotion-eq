@@ -124,6 +124,10 @@ class _VideoSource:
     Morph mode: seek(t_sec) で任意の時刻にジャンプして 1 フレーム取得.
     """
 
+    # ループ境界のクロスフェード時間 (秒). 動画末尾の最後 X 秒で
+    # 先頭フレーム (seam image) を上に重ねて jump cut を隠す.
+    SEAM_FADE_SEC = 0.6
+
     def __init__(self, path):
         self.path = path
         self.available = HAS_CV2 and os.path.exists(path)
@@ -134,6 +138,8 @@ class _VideoSource:
         self._last_grab = 0.0
         self._cur_image = None
         self._rate = 1.0
+        # ループ境界 jump cut 隠蔽用: 先頭フレームをキャッシュ
+        self._seam_image = None
         if self.available:
             self._open()
 
@@ -172,10 +178,31 @@ class _VideoSource:
         if not ok:
             return
         self._set_image(frame)
+        # 最初に成功した read を seam image として保持 (loop 末尾でブレンドに使う)
+        if self._seam_image is None and self._cur_image is not None:
+            self._seam_image = QImage(self._cur_image)   # deep copy
         self._cur_video_time += self._frame_interval
         if self._duration > 0 and self._cur_video_time >= self._duration:
             self._cur_video_time = 0.0
         self._last_grab = now
+
+    # --- ループ継ぎ目隠し用 API ----------------------------------------
+    def seam_image(self):
+        """先頭フレーム (loop 開始点) の QImage."""
+        return self._seam_image
+
+    def seam_blend_factor(self):
+        """現在の再生位置がループ末尾近くなら 0..1 の不透明度を返す.
+        update() で _cur_video_time が duration を超えた瞬間に 0 にリセット
+        されるので、戻ったあとは自動的に 0 になる."""
+        if self._duration <= 0 or self._seam_image is None:
+            return 0.0
+        remaining = self._duration - self._cur_video_time
+        if remaining >= self.SEAM_FADE_SEC:
+            return 0.0
+        # 0..1 で滑らかに上げる (smoothstep)
+        u = max(0.0, min(1.0, 1.0 - (remaining / self.SEAM_FADE_SEC)))
+        return u * u * (3.0 - 2.0 * u)
 
     # スクラブ用 — seek はキーフレーム境界 (1秒単位) に丸めて頻度を激減
     SEEK_QUANTIZE_SEC = 1.0    # この秒数の倍数にしか seek しない
@@ -881,19 +908,14 @@ class SeaWidget(QWidget):
         qp.setOpacity(1.0)
 
     def _draw_underwater_frame(self, qp, w, h, now):
-        """Underwater モード: low/mid/high 動画を crossfade."""
+        """Underwater モード: low/mid/high 動画を crossfade.
+
+        各動画は 8 秒で末尾→先頭ジャンプするため、最後 0.6 秒で
+        先頭フレーム (seam_image) を上に重ねて jump cut を隠す.
+        """
         prog = self._uw_fade_progress(now)
 
-        def draw_uw(name, opacity):
-            if opacity <= 0.01:
-                return
-            src = self._uw_sources.get(name)
-            if src is None:
-                return
-            img = src.image()
-            if img is None:
-                return
-            qp.setOpacity(opacity)
+        def _fit_rect(img):
             src_ratio = img.width() / max(1, img.height())
             dst_ratio = w / max(1, h)
             if src_ratio > dst_ratio:
@@ -906,7 +928,28 @@ class SeaWidget(QWidget):
                 draw_h = int(draw_w / src_ratio)
                 x = 0
                 y = (h - draw_h) // 2
-            qp.drawImage(QRectF(x, y, draw_w, draw_h), img)
+            return QRectF(x, y, draw_w, draw_h)
+
+        def draw_uw(name, opacity):
+            if opacity <= 0.01:
+                return
+            src = self._uw_sources.get(name)
+            if src is None:
+                return
+            img = src.image()
+            if img is None:
+                return
+            r = _fit_rect(img)
+            # ベースフレーム描画
+            qp.setOpacity(opacity)
+            qp.drawImage(r, img)
+            # ループ境界クロスフェード (jump cut 隠し)
+            seam_f = src.seam_blend_factor()
+            if seam_f > 0.01:
+                seam_img = src.seam_image()
+                if seam_img is not None:
+                    qp.setOpacity(opacity * seam_f)
+                    qp.drawImage(_fit_rect(seam_img), seam_img)
 
         if self._uw_fading and self._uw_target != self._uw_current:
             draw_uw(self._uw_current, 1.0 - prog)
@@ -916,12 +959,13 @@ class SeaWidget(QWidget):
         qp.setOpacity(1.0)
 
     def _draw_morph_frame(self, qp, w, h):
-        """morph モード: 1 本の動画から現在フレームを描画."""
+        """morph モード: 1 本の動画から現在フレームを描画 (loop seam fade 込み)."""
         if self._morph_source is None:
             return
         img = self._morph_source.image()
         if img is None:
             return
+        # 通常フレーム
         src_ratio = img.width() / max(1, img.height())
         dst_ratio = w / max(1, h)
         if src_ratio > dst_ratio:
@@ -935,6 +979,21 @@ class SeaWidget(QWidget):
             x = 0
             y = (h - draw_h) // 2
         qp.drawImage(QRectF(x, y, draw_w, draw_h), img)
+        # ループ境界のクロスフェード (surface の morph 動画は 8秒ループ)
+        seam_f = self._morph_source.seam_blend_factor()
+        if seam_f > 0.01:
+            seam_img = self._morph_source.seam_image()
+            if seam_img is not None:
+                s_ratio = seam_img.width() / max(1, seam_img.height())
+                if s_ratio > dst_ratio:
+                    sdh = h; sdw = int(sdh * s_ratio)
+                    sx = (w - sdw) // 2; sy = 0
+                else:
+                    sdw = w; sdh = int(sdw / s_ratio)
+                    sx = 0; sy = (h - sdh) // 2
+                qp.setOpacity(seam_f)
+                qp.drawImage(QRectF(sx, sy, sdw, sdh), seam_img)
+                qp.setOpacity(1.0)
 
     def _paint_rings(self, qp, w, h, now):
         if not self._rings:
