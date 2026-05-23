@@ -1622,6 +1622,8 @@ class _MandalaOverlay(QtWidgets.QWidget):
         self._opacity = 0.55
         self._eq_vals = {}
         self._eq_gain_max = 6.0
+        # δθαβγ バンド弧の表示フラグ (Underwater は心拍駆動なので False)
+        self._show_band_arc = True
         # 球面点群 (Fibonacci, 約120点で軽め)
         self._n_points = 120
         self._pts_3d = _fibonacci_sphere(self._n_points)
@@ -1641,6 +1643,13 @@ class _MandalaOverlay(QtWidgets.QWidget):
 
     def set_bpm(self, bpm):
         self._pulse_bpm = float(bpm) if (bpm and bpm > 20) else 0.0
+
+    def set_show_band_arc(self, show):
+        """δθαβγ の弧ラベルを表示するか. Underwater は心拍駆動なので False."""
+        s = bool(show)
+        if s != self._show_band_arc:
+            self._show_band_arc = s
+            self.update()
 
     def _tick(self):
         if not self.isVisible():
@@ -1786,8 +1795,9 @@ class _MandalaOverlay(QtWidgets.QWidget):
         if self._eq_vals:
             self._paint_eq_spokes(qp, cx, cy, R, ar, ag, ab)
 
-        # ===== EEG バンドラベル弧 (左側) =====
-        self._paint_band_arc(qp, cx, cy, R, ar, ag, ab)
+        # ===== EEG バンドラベル弧 (左側) — Surface でのみ表示 =====
+        if self._show_band_arc:
+            self._paint_band_arc(qp, cx, cy, R, ar, ag, ab)
 
         qp.end()
 
@@ -4422,6 +4432,9 @@ class MainWindow(QtWidgets.QMainWindow):
                         b.setChecked(k == key)
                     if hasattr(sea, "_restyle_sub_btns"):
                         sea._restyle_sub_btns()
+                # δθαβγ 弧は Surface (EEG) でのみ表示
+                if hasattr(self, "_watch_mandala"):
+                    self._watch_mandala.set_show_band_arc(key == "surface")
                 self._show_toast(label)
             elif n in (3, 4):
                 self._show_toast(
@@ -5416,6 +5429,11 @@ class MainWindow(QtWidgets.QMainWindow):
         # マンダラに EQ 値も渡す (放射状ライン用)
         if hasattr(self, "_watch_mandala"):
             self._watch_mandala.set_eq_values(eq_vals)
+            # サブビュー連動: Underwater (HR) では δθαβγ 弧を隠す
+            sea = getattr(self, "sea_widget", None)
+            if sea is not None:
+                cur_sub = getattr(sea, "_sub_view", "surface")
+                self._watch_mandala.set_show_band_arc(cur_sub == "surface")
 
     # ---- 録画 ----
     def _audio_btn_style(self, running):

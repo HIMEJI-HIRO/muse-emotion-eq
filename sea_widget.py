@@ -801,61 +801,82 @@ class SeaWidget(QWidget):
         qp.end()
 
     def _paint_driver_badge(self, qp, w, h):
-        """画面右上に「駆動源 + 現在値」を半透明ピルで常時表示."""
+        """画面右上に「駆動源 + 現在値」を半透明ピルで常時表示.
+        - emoji の幅測定が Qt で不安定なため、left-side アクセントバー +
+          固定 left padding で「emoji がはみ出ても切れない」レイアウトに.
+        - Underwater は心拍だけを大きく見せる (α/β は無関係なので非表示).
+        """
         if self._sub_view == "surface":
-            title = "🧠  EEG-DRIVEN"
+            emoji = "🧠"
+            title = "EEG-DRIVEN"
             a = self._c["arousal"]
             v = self._c["valence"]
             e = self._c["engagement"]
-            line2 = f"Arousal {a:.2f}  ·  Valence {v:.2f}  ·  Engage {e:.2f}"
+            line2 = f"Arousal {a:.2f}   Valence {v:.2f}   Engage {e:.2f}"
             accent = QColor(155, 89, 182)   # purple = brain
         else:   # underwater
             hr = self._hr_ema
             zone = self._uw_target.upper() if self._uw_available else "—"
-            title = "♥  HR-DRIVEN"
-            line2 = f"{hr:5.1f} BPM  ·  zone: {zone}"
+            emoji = "♥"
+            title = "HR-DRIVEN"
+            line2 = f"{hr:5.1f} BPM    zone: {zone}"
             accent = QColor(231, 76, 60)    # red = heart
 
-        # ピル背景
-        pad_x, pad_y = 14, 8
-        # フォント測定
-        title_font = QFont("Segoe UI", 9, QFont.Bold)
-        title_font.setLetterSpacing(QFont.AbsoluteSpacing, 1.2)
-        line2_font = QFont("Consolas", 9)
+        # フォント (一段大きく)
+        title_font = QFont("Segoe UI", 12, QFont.Bold)
+        title_font.setLetterSpacing(QFont.AbsoluteSpacing, 1.5)
+        line2_font = QFont("Consolas", 11)
+        emoji_font = QFont("Segoe UI Emoji", 16)
+
+        # ピル寸法 (text 切れ防止のため右側に +24px の余白を取る)
+        emoji_box_w = 32        # 絵文字ゾーン固定幅
+        right_pad = 24          # 右端に余白 (text が切れないため)
+        left_pad = 14
+        # 文字列幅を測定
         qp.setFont(title_font)
         title_w = qp.fontMetrics().horizontalAdvance(title)
         qp.setFont(line2_font)
         line2_w = qp.fontMetrics().horizontalAdvance(line2)
-        pill_w = max(title_w, line2_w) + pad_x * 2
-        pill_h = 38 + pad_y
-        pill_x = w - pill_w - 12
-        pill_y = 12
+        text_w = max(title_w, line2_w)
+        pill_w = left_pad + emoji_box_w + text_w + right_pad
+        pill_h = 60
+        pill_x = w - pill_w - 14
+        pill_y = 14
 
         # 半透明背景
-        qp.setOpacity(0.92)
+        qp.setOpacity(0.94)
         qp.setPen(QPen(QColor(accent.red(), accent.green(),
-                              accent.blue(), 180), 1.4))
-        qp.setBrush(QColor(15, 15, 18, 220))
+                              accent.blue(), 200), 1.6))
+        qp.setBrush(QColor(15, 15, 18, 230))
         qp.drawRoundedRect(QRectF(pill_x, pill_y, pill_w, pill_h),
                            pill_h / 2, pill_h / 2)
 
-        # アクセント縦バー (左端)
+        # アクセント縦バー (左 emoji の更に左)
         qp.setPen(Qt.NoPen)
         qp.setBrush(accent)
         qp.drawRoundedRect(
-            QRectF(pill_x + 6, pill_y + 8, 3, pill_h - 16), 1.5, 1.5)
+            QRectF(pill_x + 8, pill_y + 10, 3, pill_h - 20), 1.5, 1.5)
 
-        # タイトル
+        # 絵文字 (固定ゾーン、中央寄せ)
+        qp.setFont(emoji_font)
+        qp.setPen(accent)
+        qp.drawText(QRectF(pill_x + left_pad, pill_y,
+                           emoji_box_w, pill_h),
+                    Qt.AlignCenter, emoji)
+
+        # タイトル行 (上)
+        text_x = pill_x + left_pad + emoji_box_w
+        text_w_avail = pill_w - left_pad - emoji_box_w - right_pad
         qp.setFont(title_font)
         qp.setPen(accent)
-        qp.drawText(QRectF(pill_x + pad_x, pill_y + 6,
-                           pill_w - pad_x * 2, 16),
+        qp.drawText(QRectF(text_x, pill_y + 8,
+                           text_w_avail, 20),
                     Qt.AlignLeft | Qt.AlignVCenter, title)
         # 2行目 (現在値)
         qp.setFont(line2_font)
-        qp.setPen(QColor(230, 230, 230))
-        qp.drawText(QRectF(pill_x + pad_x, pill_y + 22,
-                           pill_w - pad_x * 2, 16),
+        qp.setPen(QColor(235, 235, 235))
+        qp.drawText(QRectF(text_x, pill_y + 30,
+                           text_w_avail, 20),
                     Qt.AlignLeft | Qt.AlignVCenter, line2)
         qp.setOpacity(1.0)
 
