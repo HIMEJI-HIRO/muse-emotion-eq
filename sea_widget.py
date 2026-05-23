@@ -469,8 +469,11 @@ class SeaWidget(QWidget):
         # その範囲を回避する.
         uw_config = {
             # name -> (file_path, loop_start_sec, loop_end_sec, warmup_sec)
+            # mid.mp4 (8秒): 全区間にサンゴ礁+魚あり → 0..7.5 でループ
+            # high.mp4 (4秒, 元動画の 4-8s をトリム): 全区間にジンベエ
+            #   → 0..4.0 でループ (full)
             "low":  (VIDEO_UNDERWATER_MID,  0.5, 7.5, 2.0),
-            "high": (VIDEO_UNDERWATER_HIGH, 1.5, 7.0, 3.0),
+            "high": (VIDEO_UNDERWATER_HIGH, 0.0, 4.0, 0.5),
         }
         for name, (path, ls, le, warm) in uw_config.items():
             src = _VideoSource(path, loop_start=ls, loop_end=le)
