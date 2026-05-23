@@ -961,6 +961,233 @@ class _Toast(QtWidgets.QFrame):
             self.deleteLater()
 
 
+class _DemoExplainOverlay(QtWidgets.QWidget):
+    """Watch のデモモード中だけ右側に出る説明パネル.
+
+    リアルタイムでメータを動かしながら「今 EEG/HR の何が変化していて、
+    どの画面要素を駆動しているか」を読み手に伝える.
+    パネル自体は Painter で描画 (子ウィジェット無しの軽量実装).
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents, True)
+        self.setAttribute(QtCore.Qt.WA_NoSystemBackground, True)
+        self.setAttribute(QtCore.Qt.WA_TranslucentBackground, True)
+        # state (外部から set)
+        self._arousal = 0.5
+        self._valence = 0.5
+        self._engagement = 0.5
+        self._hr = 60.0
+        self._phase = "CALM"
+        self._sub_view = "surface"
+        self._elapsed = 0.0       # 0..60s
+        self._total = 60.0
+        self._explanation = ""
+        # ヘッダ accent (テーマから上書きされる)
+        self._accent_eeg = QtGui.QColor(155, 89, 182)   # purple
+        self._accent_hr = QtGui.QColor(231, 76, 60)     # red
+
+    def set_state(self, arousal, valence, engagement, hr,
+                  phase, sub_view, elapsed, total, explanation):
+        self._arousal = float(arousal)
+        self._valence = float(valence)
+        self._engagement = float(engagement)
+        self._hr = float(hr)
+        self._phase = str(phase)
+        self._sub_view = str(sub_view)
+        self._elapsed = float(elapsed)
+        self._total = float(total)
+        self._explanation = str(explanation)
+        self.update()
+
+    # ------------------------------------------------------------------
+    def paintEvent(self, event):
+        qp = QtGui.QPainter(self)
+        qp.setRenderHint(QtGui.QPainter.Antialiasing, True)
+        w, h = self.width(), self.height()
+        # 半透明黒パネル + 1px のアクセント枠
+        bg = QtGui.QColor(10, 10, 14, 220)
+        qp.setBrush(bg)
+        qp.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255, 30), 1))
+        qp.drawRoundedRect(QtCore.QRectF(0, 0, w, h), 12, 12)
+
+        pad_x = 18
+        y = 16
+
+        # --- ヘッダ ---
+        title_font = QtGui.QFont("Segoe UI", 12, QtGui.QFont.Bold)
+        title_font.setLetterSpacing(QtGui.QFont.AbsoluteSpacing, 1.6)
+        qp.setFont(title_font)
+        qp.setPen(QtGui.QColor(255, 255, 255, 220))
+        qp.drawText(QtCore.QRectF(pad_x, y, w - pad_x * 2, 22),
+                    QtCore.Qt.AlignLeft, "▶  DEMO  MODE")
+        # 右端: 時間
+        time_font = QtGui.QFont("Consolas", 10)
+        qp.setFont(time_font)
+        qp.setPen(QtGui.QColor(180, 180, 180))
+        qp.drawText(QtCore.QRectF(pad_x, y, w - pad_x * 2, 22),
+                    QtCore.Qt.AlignRight,
+                    f"⏱  {self._elapsed:4.1f} / {self._total:.0f}s")
+        y += 26
+
+        # phase ピル
+        accent = (self._accent_eeg if self._sub_view == "surface"
+                  else self._accent_hr)
+        phase_pill_w = 180
+        phase_rect = QtCore.QRectF(pad_x, y, phase_pill_w, 22)
+        qp.setBrush(QtGui.QColor(accent.red(), accent.green(),
+                                 accent.blue(), 180))
+        qp.setPen(QtGui.QPen(accent, 1))
+        qp.drawRoundedRect(phase_rect, 11, 11)
+        ph_font = QtGui.QFont("Segoe UI", 10, QtGui.QFont.Bold)
+        ph_font.setLetterSpacing(QtGui.QFont.AbsoluteSpacing, 1.4)
+        qp.setFont(ph_font)
+        qp.setPen(QtGui.QColor(255, 255, 255, 240))
+        qp.drawText(phase_rect, QtCore.Qt.AlignCenter,
+                    f"PHASE · {self._phase}")
+        y += 30
+
+        # 進捗バー (60s)
+        prog_rect = QtCore.QRectF(pad_x, y, w - pad_x * 2, 4)
+        qp.setBrush(QtGui.QColor(255, 255, 255, 22))
+        qp.setPen(QtCore.Qt.NoPen)
+        qp.drawRoundedRect(prog_rect, 2, 2)
+        if self._total > 0:
+            pw = (self._elapsed / self._total) * (w - pad_x * 2)
+            qp.setBrush(accent)
+            qp.drawRoundedRect(QtCore.QRectF(pad_x, y, pw, 4), 2, 2)
+        y += 18
+
+        # --- 区切り線 ---
+        qp.setPen(QtGui.QColor(255, 255, 255, 30))
+        qp.drawLine(pad_x, y, w - pad_x, y)
+        y += 12
+
+        # ===== EEG section (Surface driver) =====
+        active_eeg = (self._sub_view == "surface")
+        section_color = (self._accent_eeg if active_eeg
+                         else QtGui.QColor(120, 120, 120))
+        qp.setFont(QtGui.QFont("Segoe UI", 10, QtGui.QFont.Bold))
+        qp.setPen(section_color)
+        suffix = "  ← DRIVING NOW" if active_eeg else ""
+        qp.drawText(QtCore.QRectF(pad_x, y, w - pad_x * 2, 16),
+                    QtCore.Qt.AlignLeft,
+                    "🧠  EEG  →  Surface" + suffix)
+        y += 22
+
+        bar_w = w - pad_x * 2 - 60
+        for label, val, color in [
+                ("Arousal", self._arousal,
+                 QtGui.QColor(231, 76, 60)),
+                ("Valence", self._valence,
+                 QtGui.QColor(46, 204, 113)),
+                ("Engagement", self._engagement,
+                 QtGui.QColor(52, 152, 219))]:
+            self._draw_meter(qp, pad_x, y, bar_w, label, val, color,
+                             dim=not active_eeg)
+            y += 22
+        y += 8
+
+        # --- 区切り線 ---
+        qp.setPen(QtGui.QColor(255, 255, 255, 30))
+        qp.drawLine(pad_x, y, w - pad_x, y)
+        y += 12
+
+        # ===== HR section (Underwater driver) =====
+        active_hr = (self._sub_view == "underwater")
+        section_color = (self._accent_hr if active_hr
+                         else QtGui.QColor(120, 120, 120))
+        qp.setFont(QtGui.QFont("Segoe UI", 10, QtGui.QFont.Bold))
+        qp.setPen(section_color)
+        suffix = "  ← DRIVING NOW" if active_hr else ""
+        qp.drawText(QtCore.QRectF(pad_x, y, w - pad_x * 2, 16),
+                    QtCore.Qt.AlignLeft,
+                    "♥  HEART RATE  →  Underwater" + suffix)
+        y += 22
+
+        # BPM meter (50..120 BPM 範囲)
+        hr_norm = max(0.0, min(1.0, (self._hr - 50.0) / 70.0))
+        self._draw_meter(qp, pad_x, y, bar_w,
+                         "BPM", hr_norm,
+                         QtGui.QColor(231, 76, 60),
+                         dim=not active_hr,
+                         value_override=f"{int(self._hr):3d}")
+        y += 22
+        # zone
+        zone = ("LOW" if self._hr < 75
+                else "MID" if self._hr < 90 else "HIGH")
+        zone_color = {"LOW": QtGui.QColor(80, 180, 255),
+                      "MID": QtGui.QColor(120, 240, 160),
+                      "HIGH": QtGui.QColor(255, 120, 180)}[zone]
+        if not active_hr:
+            zone_color.setAlpha(120)
+        qp.setFont(QtGui.QFont("Segoe UI", 9))
+        qp.setPen(QtGui.QColor(200, 200, 200,
+                                255 if active_hr else 120))
+        qp.drawText(QtCore.QRectF(pad_x, y, 80, 18),
+                    QtCore.Qt.AlignLeft, "Zone")
+        qp.setFont(QtGui.QFont("Consolas", 11, QtGui.QFont.Bold))
+        qp.setPen(zone_color)
+        qp.drawText(QtCore.QRectF(pad_x + 60, y, 100, 18),
+                    QtCore.Qt.AlignLeft, zone)
+        y += 26
+
+        # --- 区切り線 ---
+        qp.setPen(QtGui.QColor(255, 255, 255, 30))
+        qp.drawLine(pad_x, y, w - pad_x, y)
+        y += 12
+
+        # ===== Explanation 文 =====
+        qp.setFont(QtGui.QFont("Segoe UI", 9, QtGui.QFont.Bold))
+        qp.setPen(QtGui.QColor(200, 200, 200))
+        qp.drawText(QtCore.QRectF(pad_x, y, w - pad_x * 2, 16),
+                    QtCore.Qt.AlignLeft, "▼  WHAT'S HAPPENING")
+        y += 20
+        qp.setFont(QtGui.QFont("Segoe UI", 9))
+        qp.setPen(QtGui.QColor(220, 220, 220))
+        # ワードラップ表示
+        text_rect = QtCore.QRectF(pad_x, y, w - pad_x * 2, h - y - 12)
+        qp.drawText(text_rect,
+                    QtCore.Qt.AlignLeft | QtCore.Qt.TextWordWrap,
+                    self._explanation)
+        qp.end()
+
+    def _draw_meter(self, qp, x, y, bar_w, label, value, color,
+                    dim=False, value_override=None):
+        """ラベル + 横バー + 数値 を 1 行で描く."""
+        value = max(0.0, min(1.0, float(value)))
+        # ラベル
+        qp.setFont(QtGui.QFont("Segoe UI", 9))
+        text_color = QtGui.QColor(210, 210, 210,
+                                  120 if dim else 240)
+        qp.setPen(text_color)
+        qp.drawText(QtCore.QRectF(x, y, 88, 18),
+                    QtCore.Qt.AlignLeft, label)
+        # バー背景
+        track_x = x + 90
+        track = QtCore.QRectF(track_x, y + 4, bar_w - 30, 9)
+        qp.setBrush(QtGui.QColor(255, 255, 255, 22))
+        qp.setPen(QtCore.Qt.NoPen)
+        qp.drawRoundedRect(track, 4, 4)
+        # フィル
+        fill_color = QtGui.QColor(color)
+        if dim:
+            fill_color.setAlpha(80)
+        fill_w = (bar_w - 30) * value
+        qp.setBrush(fill_color)
+        qp.drawRoundedRect(
+            QtCore.QRectF(track_x, y + 4, fill_w, 9), 4, 4)
+        # 数値
+        qp.setFont(QtGui.QFont("Consolas", 9, QtGui.QFont.Bold))
+        qp.setPen(QtGui.QColor(245, 245, 245,
+                                120 if dim else 240))
+        val_text = value_override if value_override is not None \
+            else f"{value:.2f}"
+        qp.drawText(QtCore.QRectF(x + bar_w - 32, y, 36, 18),
+                    QtCore.Qt.AlignRight, val_text)
+
+
 class _BigControlPanel(QtWidgets.QDialog):
     """ヘッダクリックで開く大型操作パネル.
     モード切替 / Audio / REC / Volume / Spectrum を 1.8倍 サイズで表示."""
@@ -3038,6 +3265,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._watch_demo_t0 = 0.0
         self._watch_demo_timer = QtCore.QTimer(self)
         self._watch_demo_timer.timeout.connect(self._watch_demo_tick)
+        # Demo 説明パネル (右側オーバーレイ. ON 時のみ visible)
+        self._watch_demo_panel = _DemoExplainOverlay(self.watch_page)
+        self._watch_demo_panel.setVisible(False)
         # マウス追従パーティクル (HUD の上)
         self._watch_cursor_particles = _CursorParticles(self.watch_page)
         self._watch_cursor_particles.set_accent(self.theme.accent)
@@ -4681,6 +4911,9 @@ class MainWindow(QtWidgets.QMainWindow):
             self._watch_demo_btn.setChecked(True)
             self._watch_demo_btn.setText("■ Demo")
             self._watch_demo_timer.start(80)   # 12.5 Hz
+            if hasattr(self, "_watch_demo_panel"):
+                self._watch_demo_panel.setVisible(True)
+                self._watch_demo_panel.raise_()
             self._show_toast(
                 "▶  Demo mode ON — EEG/HR を模擬値で循環します")
         else:
@@ -4689,6 +4922,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self._watch_demo_btn.setText("▶ Demo")
             self._watch_demo_btn.setFixedSize(76, 36)   # 元のサイズに戻す
             self._watch_demo_timer.stop()
+            if hasattr(self, "_watch_demo_panel"):
+                self._watch_demo_panel.setVisible(False)
             self._show_toast("■  Demo mode OFF")
 
     def _watch_demo_tick(self):
@@ -4792,6 +5027,48 @@ class MainWindow(QtWidgets.QMainWindow):
             min_w = self._watch_demo_btn.sizeHint().width() + 12
             self._watch_demo_btn.setFixedSize(
                 max(110, min_w), 36)
+
+        # 説明文 (phase 別)
+        if t < 30.0:
+            if u < 0.30:
+                explanation = (
+                    "Calm baseline. アコースティック・アンビエント等を聴いている状態. "
+                    "Arousal/Engagement 低、Valence 中庸. 海面は穏やかな朝.")
+            elif u < 0.65:
+                explanation = (
+                    "Rising. 曲が盛り上がり中. β/α 比が上がり Arousal ↑, "
+                    "前頭 α 非対称が左寄りに動き Valence ↓. シーンは Golden へ.")
+            elif u < 0.90:
+                explanation = (
+                    "Intense. ロック / EDM 全開. Arousal ≈ 0.7 まで上昇, "
+                    "Engagement も高めで集中. 海面に波が立ち始める.")
+            else:
+                explanation = (
+                    "Stormy. ドラマチック / アグレッシブな曲で頂点. "
+                    "Storm シーン発動条件 (A>0.6 ∧ V<0.4) を満たし、海面が荒れる.")
+        else:
+            if hr < 75:
+                explanation = (
+                    "LOW zone (<75 BPM). スロー曲 / 瞑想音楽でリラックス. "
+                    "水面に近い明るい浅瀬. 静かなアンビエント空間.")
+            elif hr < 90:
+                explanation = (
+                    "MID zone (75–90 BPM). ミドルテンポで心拍が上がってきた. "
+                    "中層へ潜行 — 光と影のコントラストが増す.")
+            else:
+                explanation = (
+                    "HIGH zone (>90 BPM). アップテンポ + 軽い身体活動レベル. "
+                    "深層へ — 視界が暗くなり緊張感が漂う.")
+
+        # 説明パネルに反映
+        if hasattr(self, "_watch_demo_panel") and \
+                self._watch_demo_panel.isVisible():
+            self._watch_demo_panel.set_state(
+                arousal=arousal, valence=valence,
+                engagement=engagement, hr=hr,
+                phase=phase_label, sub_view=target_sub,
+                elapsed=t, total=60.0,
+                explanation=explanation)
 
         # HUD も模擬データで書く
         rus_fake = {"arousal": arousal, "valence": valence}
@@ -5113,6 +5390,15 @@ class MainWindow(QtWidgets.QMainWindow):
                         - self._watch_demo_btn.width() - pad - 6,
                         pad + 50)
                     self._watch_demo_btn.raise_()
+                if hasattr(self, "_watch_demo_panel"):
+                    # 右側に固定幅 360 のパネル、上下に余白 100 / 80
+                    pw = 360
+                    ph = max(360, self.watch_page.height() - 180)
+                    self._watch_demo_panel.setGeometry(
+                        self.watch_page.width() - pw - 14,
+                        100,
+                        pw, ph)
+                    self._watch_demo_panel.raise_()
         return super().eventFilter(obj, event)
 
     # ---- Watch mode の HUD ----
