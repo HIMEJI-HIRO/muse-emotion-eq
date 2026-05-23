@@ -81,20 +81,18 @@
 
 ## 結論
 
-- **デモ完成まで 2 週間** (人間の専従時間ベース)
-- **コード ~5500 行** (主要 6 ファイル + アセット)
-- AI なしでこのスピードは不可能だったと判断
+- **コード ~6000 行** (主要 6 ファイル + ドキュメント + アセット)
+- AI なしでこのスピード + 質は実現不可能だったと判断
 - 一方で**判断は全て人間が下した** — AI は実装担当の優秀な同僚
 
 ## 数字で見る AI 活用
 
 | 指標 | 値 |
 |---|---|
-| 開発期間 | ~2 週間 |
-| Python LoC | ~5500 (`realtime_monitor.py` 4000+, `sea_widget.py` 900+, 他) |
-| カスタムウィジェット (paintEvent) | 13+ (Particle EEG, Band Sphere, Russell Pad, Mandala, Matrix Rain, Tron Grid, Ribbon Bar 等) |
-| AI 生成アセット | 動画 6 本 (Veo) + 画像 8 枚 (Imagen) |
-| AI に書かせたコード割合 | ~95% (人間は構造修正と仕様判断) |
+| Python LoC | ~6000 (`realtime_monitor.py` 6200+, `sea_widget.py` 1000+, 他) |
+| カスタムウィジェット (paintEvent) | 15+ (Particle EEG, Band Sphere, Russell Pad, Mandala, Matrix Rain, Tron Grid, Ribbon Bar, Demo Explainer 等) |
+| AI 生成アセット | 動画 (Veo) + 画像 (Imagen) |
+| AI に書かせたコード割合 | ~95% (人間は構造判断と仕様判断) |
 | AI が踏んだトラブルを人間が指摘 | h264 デコード問題 / pip 経路 / VB-CABLE デバイス選定 etc. |
 
 ## AI 共同開発のテンプレ的なやり方

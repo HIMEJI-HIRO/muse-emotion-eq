@@ -37,18 +37,29 @@ Muse S Athena の EEG / PPG から感情を推定し、
 **1 行で**: 脳波で音が変わるアプリ。
 
 **3 行で**:
-- Muse S Athena の **4ch EEG + PPG** から感情 (Arousal / Valence / Engagement / HR) を推定
+- Muse S Athena の **4ch EEG + PPG** から感情 (Arousal / Valence / Engagement / HR) をリアルタイム推定
 - 推定値を**音楽 EQ** (Drums / Bass / Mid / Vocals / High / Air) と**没入型映像** (海 / 水中) に同時反映
-- **AI と二人三脚 (Claude / Veo / Imagen) で 2 週間で MVP**
+- 設計・実装は **Claude (Anthropic) Code SDK** との対話駆動で進めた
 
-> Vital Sensing × Affective Computing × Audio × Generative AI が一つに統合された MVP
+> Vital Sensing × Affective Computing × Audio × Generative AI を一つに統合した個人プロジェクト
 
 ### なぜ作ったか
 
-「音楽を聴いてる時の **生体反応** がそのまま音と映像に返ってくる体験」を作りたかった。
-スマートウォッチが心拍を見せるだけで終わるのではなく、**心拍が上がる → 海が深く潜って
-ジンベエザメが現れる** ような **環境の応答** にする事で、人と機械の境目を柔らかくする
+音楽を聴いている時の **生体反応** がそのまま音と映像に返ってくる体験を作りたかった。
+スマートウォッチが心拍を見せて終わるのではなく、**心拍が上がる → 海が深く潜って
+ジンベエザメが現れる** ような **環境の応答** にすることで、人と機械の境目を柔らかくする
 インタラクションを試した。デモは **ヘッドセット無しでも `▶ Demo` モードで体験可能**。
+
+### 30 秒で分かるポイント
+
+| | |
+|---|---|
+| 🧠 **入力** | Muse S Athena (4ch EEG + PPG) → Mind Monitor → OSC :5000 |
+| 📊 **感情推定** | Russell 円環モデル (Arousal / Valence) + Engagement (β/α 比) を 30 Hz で算出 |
+| 🎵 **音への反映** | `pedalboard` で 6 バンド EQ + Reverb をリアルタイム制御 (VB-CABLE 経由) |
+| 🌊 **映像への反映** | 海面 morph (EEG 駆動) / 水中 2 ゾーン (HR 駆動) |
+| 🤖 **AI 協働** | Claude Code SDK と対話駆動で実装 · Veo / Imagen でビジュアル素材生成 |
+| 📦 **動作確認** | ヘッドセット無しでも `▶ Demo` モードで全シーンを 60 秒ループ体験 |
 
 ---
 
@@ -66,12 +77,12 @@ Muse S Athena の EEG / PPG から感情を推定し、
 <td align="center" width="33%">
 <img src="docs/images/ui_listen.png" alt="Listen"><br>
 <b>🎚 Listen</b><br>
-<sub>操作: リボン感情バー / 楽器サークル / Big "Happy"</sub>
+<sub>操作: リボン感情バー / 楽器サークル / 心拍ミニ波形 / クリック ±0.5dB</sub>
 </td>
 <td align="center" width="33%">
 <img src="docs/images/ui_watch_surface.png" alt="Watch"><br>
 <b>🌊 Watch</b><br>
-<sub>没入: 神経網オーブ / Matrix rain / Tron grid / 海映像</sub>
+<sub>没入: 神経網オーブ / Matrix rain / Tron grid / 海映像 + Driver Badge</sub>
 </td>
 </tr>
 </table>
@@ -163,7 +174,7 @@ E: 0.42 → 0.62
 - **3 モード** (Studio / Listen / Watch) + スライドアニメ
 - **2軸テーマ**: Accent 15 色 × BG 6 = 90 パターン + 🎨 カスタム色ピッカー
 - カードドラッグ並び替え + hover 詳細パネル
-- ⌨ ショートカット文脈別: `1/2/3/4` `Space` `R` `F1/F11/F12`
+- ⌨ 文脈別ショートカット: `1/2/3` `Ctrl+1/2/3` `Space` `R` `F1/F11/F12`
 - 起動スプラッシュ / Welcome / About / Settings
 - Toast 通知 / Idle スクリーンセーバー
 
@@ -176,11 +187,11 @@ E: 0.42 → 0.62
 - パーティクル EEG (4ch × 60 粒子)
 - 神経網オーブ (Fibonacci 球面 + magenta/cyan spiral)
 - Matrix rain + Tron wireframe grid
-- 六角形 EQ ラベル + δθαβγ 弧
+- 六角形 EQ ラベル + δθαβγ 弧 (Surface のみ)
 - リボン感情バー (流体ベジエ)
 - 楽器サークル (テクスチャ画像 + ネオン縁)
-- HUD: NEURAL STATE + EQ STATE + [STATUS] バー
-- Watch 📷 Photo / マウス追従パーティクル
+- HUD: NEURAL STATE + EQ STATE + 駆動源バッジ
+- Watch 📷 Photo / マウス追従パーティクル / ▶ Demo モード
 
 </td>
 <td valign="top" width="50%">
@@ -189,8 +200,8 @@ E: 0.42 → 0.62
 - **Muse S Athena** (EEG 4ch + PPG + 光学) → Mind Monitor → PC OSC
 - Bluetooth レイテンシ対応 (1024 buffer, "high" latency)
 - 出力デバイス Host API 自動マッチング (Illegal combination 回避)
-- ヘッダの背景は AI 生成回路パターン (Imagen)
-- 没入映像は AI 生成 (Veo) — 海 / 水中 / 都市 / 森
+- ヘッダ背景 + 楽器テクスチャは AI 生成 (Imagen)
+- 没入映像は AI 生成 (Veo) — 海面 morph / 水中 LOW (サンゴ礁) / HIGH (ジンベエザメ)
 
 </td>
 </tr>
@@ -341,14 +352,14 @@ muse-emotion-eq/
 
 ## 🤖 AI Workflow
 
-このプロジェクトは **Claude (Anthropic)** との対話駆動で開発した。
-人間が**意思決定** / AI が**実装** の明確な分業。
+このプロジェクトは **Claude (Anthropic) Code SDK** との対話駆動で開発した。
+人間が**意思決定**、AI が**実装** という明確な分業。
 工程記録: [docs/ai_assisted_dev.md](docs/ai_assisted_dev.md)
 
 **生成 AI 利用箇所**:
-- 📝 Code: Claude — Python ~5,500 行
-- 🎬 Videos: Veo 3 — 海 calm/golden/storm/morph、水中 low/mid/high、都市、森
-- 🖼 Images: Imagen — 回路パターン、サイバー都市、楽器テクスチャ 6 枚
+- 📝 Code: Claude — Python ~6,000 行 + ドキュメント
+- 🎬 Videos: Veo — 海面 morph 動画、水中サンゴ礁、水中ジンベエザメ
+- 🖼 Images: Imagen — ヘッダ回路パターン、楽器テクスチャ 6 枚
 
 ---
 

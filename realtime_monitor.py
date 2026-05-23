@@ -5314,7 +5314,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "href='https://github.com/HIMEJI-HIRO/muse-emotion-eq'>"
             "github.com/HIMEJI-HIRO/muse-emotion-eq</a></p>"
             "<p style='color:#8a8a8a; font-size:10px;'>"
-            "Co-developed with Claude (Anthropic) in 2 weeks.<br>"
+            "Co-developed with Claude (Anthropic) Code SDK.<br>"
             "Vital Sensing × Affective Computing × Audio.</p>"
             % (self.theme.accent, self.theme.accent)
         )
