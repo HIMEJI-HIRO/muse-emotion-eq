@@ -4687,60 +4687,115 @@ class MainWindow(QtWidgets.QMainWindow):
             self._watch_demo_active = False
             self._watch_demo_btn.setChecked(False)
             self._watch_demo_btn.setText("▶ Demo")
+            self._watch_demo_btn.setFixedSize(76, 36)   # 元のサイズに戻す
             self._watch_demo_timer.stop()
             self._show_toast("■  Demo mode OFF")
 
     def _watch_demo_tick(self):
-        """40 秒で 1 サイクル: calm → focus → excited → stressed → calm.
-        各 phase で arousal / valence / engagement / HR を入れ替える.
+        """デモモード: 60 秒で 1 サイクル.
+
+        Phase A (0-30s, Surface):
+          - EEG (Arousal/Valence/Engagement) を**連続的に**滑らかに変化
+          - Calm baseline → 嵐 (Storm) ピーク へ smoothstep で遷移
+          - 終端: A=0.90, V=0.20, E=0.70 (高覚醒・負 valence = 嵐)
+          - 値は「実際に music で到達可能なレンジ」を想定:
+              通常リスニング: A=0.2-0.7 / V=0.3-0.8 / HR=55-85 BPM
+              嵐状態:         A>0.85 / V<0.3 (ドラマ/激しい曲で到達)
+
+        Phase B (30-60s, Underwater):
+          - HR を**連続的に**変化 (60 → 110 → 60 BPM, sin arc)
+          - LOW → MID → HIGH → MID → LOW の全 zone を巡回
+          - 通常: 60-85 BPM 安定 / アップテンポ曲: 90-110 BPM 到達
+
         SeaWidget と Mandala に直接注入. State.* には触らない (録画汚染防止).
         """
         if not self._watch_demo_active:
             return
         import math as _m
-        t = (time.monotonic() - self._watch_demo_t0) % 40.0
-        # 5 phase × 8 秒
-        phases = [
-            # (label,           arousal, valence, engage, hr, sub_view)
-            ("CALM",            0.25, 0.65, 0.40, 62, "underwater"),
-            ("FOCUS",           0.45, 0.55, 0.80, 68, "surface"),
-            ("EXCITED",         0.80, 0.85, 0.75, 92, "surface"),
-            ("STRESSED",        0.85, 0.20, 0.65, 105, "underwater"),
-            ("CHILL",           0.30, 0.70, 0.45, 70, "surface"),
-        ]
-        idx = int(t // 8) % len(phases)
-        nxt = (idx + 1) % len(phases)
-        # smooth tween 内 phase 進捗 (0..1)
-        u = (t - idx * 8) / 8.0
-        # 0→0 で滑らかに ease in-out
-        s = 0.5 - 0.5 * _m.cos(_m.pi * u)
-        a0, v0, e0, h0, sub0 = phases[idx][1:]
-        a1, v1, e1, h1, sub1 = phases[nxt][1:]
-        a = a0 + (a1 - a0) * s
-        v = v0 + (v1 - v0) * s
-        e = e0 + (e1 - e0) * s
-        h = h0 + (h1 - h0) * s
-        # Sea widget に注入
+        t = (time.monotonic() - self._watch_demo_t0) % 60.0
+
+        if t < 30.0:
+            # ============ Phase A: Surface — EEG 連続変化 → 嵐 ============
+            target_sub = "surface"
+            u = t / 30.0   # 0..1
+            # 0→1 で滑らかな ease in-out (smoothstep)
+            s = u * u * (3.0 - 2.0 * u)
+
+            # 開始 (Calm baseline)  →  終端 (Storm)
+            #   Arousal:    0.25  →  0.90   (覚醒↑)
+            #   Valence:    0.65  →  0.20   (快→不快)
+            #   Engagement: 0.40  →  0.70   (集中↑)
+            arousal = 0.25 + 0.65 * s + 0.035 * _m.sin(t * 0.7)
+            valence = 0.65 - 0.45 * s + 0.025 * _m.sin(t * 0.5 + 1.2)
+            engagement = 0.40 + 0.30 * s + 0.030 * _m.sin(t * 0.4)
+            # クランプ
+            arousal = max(0.0, min(1.0, arousal))
+            valence = max(0.0, min(1.0, valence))
+            engagement = max(0.0, min(1.0, engagement))
+            # HR は EEG に弱く連動 (副次的・Surface では使われない)
+            hr = 65.0 + 25.0 * s + 1.5 * _m.sin(t * 0.8)
+            # phase ラベル (toast 用)
+            phase_label = ("CALM" if u < 0.25 else
+                           "RISING" if u < 0.55 else
+                           "INTENSE" if u < 0.85 else "🌩 STORM")
+
+        else:
+            # ============ Phase B: Underwater — HR 連続変化 ============
+            target_sub = "underwater"
+            local_t = t - 30.0   # 0..30
+            u = local_t / 30.0   # 0..1
+
+            # HR: 60 → 110 → 60 を sin arc で描く. ピーク = local_t=15s.
+            #   LOW (<75)  →  MID (75-90)  →  HIGH (>90)  →  MID  →  LOW
+            hr = 60.0 + 50.0 * _m.sin(_m.pi * u) + 2.5 * _m.sin(local_t * 1.1)
+            hr = max(50.0, min(120.0, hr))
+            # Underwater では EEG はベースライン (心拍主導なので)
+            arousal = 0.50 + 0.05 * _m.sin(local_t * 0.3)
+            valence = 0.55 + 0.05 * _m.sin(local_t * 0.25)
+            engagement = 0.45 + 0.05 * _m.sin(local_t * 0.4)
+            # phase ラベル
+            zone = ("LOW" if hr < 75 else "MID" if hr < 90 else "HIGH")
+            phase_label = f"♥ {int(hr)} BPM · {zone}"
+
+        # --- Sea widget に注入 ---
         sea = getattr(self, "sea_widget", None)
         if sea is not None:
-            sea.set_state(arousal=a, valence=v, engagement=e,
-                          hr_bpm=h, hsi=1.0, signal_fresh=1.0)
-            # phase 切替点でサブビュー変更
-            if u < 0.05 and getattr(sea, "_sub_view", None) != sub0:
-                sea.set_sub_view(sub0)
-                if sub0 in getattr(sea, "_sub_btns", {}):
+            sea.set_state(arousal=arousal, valence=valence,
+                          engagement=engagement,
+                          hr_bpm=hr, hsi=1.0, signal_fresh=1.0)
+            # サブビュー切替 (phase 境界で 1 回だけ)
+            cur_sub = getattr(sea, "_sub_view", None)
+            if cur_sub != target_sub:
+                sea.set_sub_view(target_sub)
+                if target_sub in getattr(sea, "_sub_btns", {}):
                     for k, b in sea._sub_btns.items():
-                        b.setChecked(k == sub0)
+                        b.setChecked(k == target_sub)
                     if hasattr(sea, "_restyle_sub_btns"):
                         sea._restyle_sub_btns()
                 if hasattr(self, "_watch_mandala"):
                     self._watch_mandala.set_show_band_arc(
-                        sub0 == "surface")
+                        target_sub == "surface")
+                # 切替時に toast (phase 名を出す)
+                if hasattr(self, "_show_toast"):
+                    title = ("🧠 EEG-driven · Surface"
+                             if target_sub == "surface"
+                             else "♥ HR-driven · Underwater")
+                    self._show_toast(title)
+
+        # phase ラベルを demo ボタンに表示 (常時更新)
+        if hasattr(self, "_watch_demo_btn"):
+            self._watch_demo_btn.setText(f"■ {phase_label}")
+            # ボタン幅を内容に合わせる
+            self._watch_demo_btn.adjustSize()
+            min_w = self._watch_demo_btn.sizeHint().width() + 12
+            self._watch_demo_btn.setFixedSize(
+                max(110, min_w), 36)
+
         # HUD も模擬データで書く
-        rus_fake = {"arousal": a, "valence": v}
+        rus_fake = {"arousal": arousal, "valence": valence}
         if hasattr(self, "_update_watch_hud"):
             self._update_watch_hud(
-                rus_fake, e, h, self.audio.get_bands(),
+                rus_fake, engagement, hr, self.audio.get_bands(),
                 quality=[1, 1, 1, 1],
                 recording=getattr(self, "recording", False))
 
