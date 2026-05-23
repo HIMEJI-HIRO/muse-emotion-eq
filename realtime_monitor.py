@@ -5053,16 +5053,45 @@ class MainWindow(QtWidgets.QMainWindow):
                            "INTENSE" if u < 0.90 else "STORMY")
 
         else:
-            # ============ Phase B: Underwater — HR 連続変化 (抑えめ) ============
+            # ============ Phase B: Underwater — HR 連続変化 ============
+            # 全 3 シーン (LOW=浅瀬 / MID=魚群 / HIGH=ジンベエザメ) を
+            # 確実に表示するための台形カーブ.
+            # sea_widget.py の閾値:
+            #   HR_HIGH_ENTER=92 / HR_HIGH_EXIT=82
+            #   HR_MID_ENTER=75  / HR_MID_EXIT=65
+            #   HR_MIN_DWELL_SEC=6  / CROSSFADE_SEC=2.5
+            # → HIGH を「2.5(in) + 6+(visible) + 2.5(out)」で約 13s 滞在.
+            #
+            #   0- 3s  LOW    (60 BPM, ベースライン)
+            #   3- 9s  rise   (60 → 102, 全ゾーンを通過)
+            #   9-22s  HIGH   (100 ± 3, ジンベエ シーン 13秒固定)
+            #  22-28s  descend(100 → 62, HIGH→MID→LOW 逆順通過)
+            #  28-30s  LOW    (60 BPM, クールダウン)
             target_sub = "underwater"
             local_t = t - 30.0   # 0..30
             u = local_t / 30.0   # 0..1
 
-            # HR: 62 → 92 → 62 を sin arc で. ピーク = local_t=15s.
-            #   LOW (<75)  →  MID (75-90)  →  ちょい HIGH 触る  →  MID  →  LOW
-            # 30 BPM レンジ = 通常リスニング + 軽運動相当の現実的振幅.
-            hr = 62.0 + 30.0 * _m.sin(_m.pi * u) + 1.8 * _m.sin(local_t * 1.1)
-            hr = max(55.0, min(100.0, hr))
+            if local_t < 3.0:
+                # ベースライン LOW
+                hr = 60.0 + 0.8 * _m.sin(local_t * 0.5)
+            elif local_t < 9.0:
+                # smoothstep で 60 → 102
+                p = (local_t - 3.0) / 6.0
+                s_hr = p * p * (3.0 - 2.0 * p)
+                hr = 60.0 + 42.0 * s_hr + 0.6 * _m.sin(local_t * 0.6)
+            elif local_t < 22.0:
+                # HIGH プラトー (常に >92, 微振動だけ)
+                hr = 100.0 + 2.8 * _m.sin((local_t - 9.0) * 0.55)
+            elif local_t < 28.0:
+                # smoothstep で 100 → 62 (HIGH→MID→LOW を順に通過)
+                p = (local_t - 22.0) / 6.0
+                s_hr = p * p * (3.0 - 2.0 * p)
+                hr = 100.0 - 38.0 * s_hr + 0.6 * _m.sin(local_t * 0.6)
+            else:
+                # クールダウン LOW
+                hr = 62.0 + 0.8 * _m.sin(local_t * 0.5)
+
+            hr = max(55.0, min(110.0, hr))
             # Underwater では EEG はベースライン (心拍主導なので)
             arousal = 0.48 + 0.04 * _m.sin(local_t * 0.3)
             valence = 0.55 + 0.04 * _m.sin(local_t * 0.25)
@@ -5124,18 +5153,28 @@ class MainWindow(QtWidgets.QMainWindow):
                     "Stormy. ドラマチック / アグレッシブな曲で頂点. "
                     "Storm シーン発動条件 (A>0.6 ∧ V<0.4) を満たし、海面が荒れる.")
         else:
-            if hr < 75:
+            local_t = t - 30.0
+            if local_t < 3.0:
                 explanation = (
-                    "LOW zone (<75 BPM). スロー曲 / 瞑想音楽でリラックス. "
-                    "水面に近い明るい浅瀬. 静かなアンビエント空間.")
-            elif hr < 90:
+                    "ベースライン LOW (60 BPM). スロー曲 / 瞑想音楽で安静中. "
+                    "光あふれる浅瀬を漂う.")
+            elif local_t < 9.0:
                 explanation = (
-                    "MID zone (75–90 BPM). ミドルテンポで心拍が上がってきた. "
-                    "中層へ潜行 — 光と影のコントラストが増す.")
+                    "心拍が上昇中 (60 → 100 BPM). アップテンポへ移行. "
+                    "LOW → MID → HIGH と全ゾーンを順に通過. 視界が深くなる.")
+            elif local_t < 22.0:
+                explanation = (
+                    "HIGH zone 維持 (≈100 BPM). 激しい曲 + 軽い身体活動. "
+                    "深層: 🐋 ジンベエザメ + マンタが視界に入る最深シーン. "
+                    "(6 秒以上 dwell して見せ場を作る)")
+            elif local_t < 28.0:
+                explanation = (
+                    "クールダウン中 (100 → 62 BPM). 曲が落ち着き心拍も下降. "
+                    "HIGH → MID → LOW を逆順に通過して浅瀬へ戻る.")
             else:
                 explanation = (
-                    "HIGH zone (>90 BPM). アップテンポ + 軽い身体活動レベル. "
-                    "深層へ — 視界が暗くなり緊張感が漂う.")
+                    "LOW zone へ着地. 1 サイクル完了. "
+                    "次は Surface 側 (脳波駆動) からループ再開.")
 
         # 説明パネルに反映
         if hasattr(self, "_watch_demo_panel") and \
