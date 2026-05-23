@@ -38,10 +38,17 @@ Muse S Athena の EEG / PPG から感情を推定し、
 
 **3 行で**:
 - Muse S Athena の **4ch EEG + PPG** から感情 (Arousal / Valence / Engagement / HR) を推定
-- 推定値を**音楽 EQ** (Drums / Bass / Mid / Vocals / High / Air) と**没入型映像** (海 / 水中 / 都市 / 森) に同時反映
+- 推定値を**音楽 EQ** (Drums / Bass / Mid / Vocals / High / Air) と**没入型映像** (海 / 水中) に同時反映
 - **AI と二人三脚 (Claude / Veo / Imagen) で 2 週間で MVP**
 
 > Vital Sensing × Affective Computing × Audio × Generative AI が一つに統合された MVP
+
+### なぜ作ったか
+
+「音楽を聴いてる時の **生体反応** がそのまま音と映像に返ってくる体験」を作りたかった。
+スマートウォッチが心拍を見せるだけで終わるのではなく、**心拍が上がる → 海が深く潜って
+ジンベエザメが現れる** ような **環境の応答** にする事で、人と機械の境目を柔らかくする
+インタラクションを試した。デモは **ヘッドセット無しでも `▶ Demo` モードで体験可能**。
 
 ---
 
@@ -218,8 +225,9 @@ python realtime_monitor.py
 
 | キー | 動作 |
 |:---:|---|
-| `1` `2` `3` | Studio / Listen / Watch (文脈別: Watch 内では sub-view 切替) |
-| `4` | Watch 内で 🌲 Forest サブビュー |
+| `1` `2` `3` | Studio / Listen / Watch モード切替 |
+| `1` `2` (Watch 内) | 🌊 Surface (🧠 EEG) / 🌊 Underwater (♥ HR) サブビュー |
+| `Ctrl+1/2/3` | モード切替 (どこからでも) |
 | `Space` | ♪ Audio ON / OFF |
 | `R` | ● REC トグル |
 | `F1` | キーボードショートカット一覧 |
@@ -254,7 +262,7 @@ graph LR
 | **Arousal** | β + γ 高域パワー | EQ Drums / High / Vocals + 海面速度 |
 | **Valence** | 前頭 α 左右差 (AF7/AF8) | EQ Air / Reverb / シーン選択 |
 | **Engagement** | β / α 比 | EQ Mid / Vocals + 森シーン速度 |
-| **HR (BPM)** | PPG ピーク検出 + OSC | 海面リング / 水中シーン切替 / 都市 vignette |
+| **HR (BPM)** | PPG ピーク検出 + OSC | 海面リング / Underwater シーン切替 (LOW ↔ HIGH) |
 | **HSI** | Muse horseshoe (1=Good, 4=Bad) | 映像の霧エフェクト |
 
 詳細: [docs/signal_processing.md](docs/signal_processing.md)
@@ -286,8 +294,8 @@ graph LR
 | 動画背景 | OpenCV (cv2) |
 | OSC | python-osc |
 | EEG | Muse S Athena + Mind Monitor |
-| AI 生成 | Veo (動画 7本) / Imagen (画像 9枚) |
-| 共同開発 | **Claude (Anthropic)** |
+| AI 生成 | Veo (海 + 水中シーン) / Imagen (回路パターン、楽器テクスチャ) |
+| 共同開発 | **Claude (Anthropic) Code SDK** |
 
 ---
 
@@ -303,12 +311,14 @@ muse-emotion-eq/
 ├── theme.py                 # 2 軸テーマ (Accent × BG)
 │
 ├── assets/
-│   ├── sea/                 # AI 生成シーン動画 7 本 (Git LFS)
-│   ├── bg/                  # ヘッダ背景 / City 背景
+│   ├── sea/                 # AI 生成シーン動画 (Git LFS)
+│   ├── bg/                  # ヘッダ背景パターン
 │   └── instruments/         # 楽器テクスチャ 6 枚
 ├── docs/                    # 設計ドキュメント + UI スクショ
-├── demo/                    # デモ動画 (Git LFS)
-└── scripts/                 # 環境チェック / 自動スクショ
+├── demo/                    # デモ動画 / プロモ素材 (Git LFS)
+├── scripts/                 # 環境チェック / 自動スクショ / 録画
+├── CHANGELOG.md             # バージョン履歴
+└── CONTRIBUTING.md          # 開発参加ガイド
 ```
 
 ---
@@ -319,12 +329,13 @@ muse-emotion-eq/
 - [x] **Phase 1** — 6-band EQ + 感情自動制御
 - [x] **Phase 1.5** — Emotional Seascape (Calm / Golden / Storm)
 - [x] **Phase 2** — UI 大改修 (Studio / Listen / Watch 3 モード)
-- [x] **Phase 3** — Underwater シーン (HR 駆動 3 段階)
-- [x] **Phase 3.5** — City + Forest サブビュー (動画 + HR シンク)
+- [x] **Phase 3** — Underwater 2-zone (🐠 サンゴ礁 / 🐋 ジンベエ) HR 駆動
 - [x] **Phase 4** — CSV セッションリプレイ機能
 - [x] **Phase 5** — UX 微調整層 (toast, shortcut, settings 等 15+)
-- [ ] **Phase 6** — 個人 EEG キャリブレーション (ML)
-- [ ] **Phase 7** — 1 分デモ動画 + Public 化
+- [x] **Phase 6** — Driver-source overlay + Demo モード (ヘッドセット無しレビュー対応)
+- [x] **Phase 7** — Public 化 + ポートフォリオ整備
+- [ ] **Phase 8** — 個人 EEG キャリブレーション (ML)
+- [ ] **Phase 9** — 1 分デモ動画録画 + LabBase/TechOffer 連携
 
 ---
 

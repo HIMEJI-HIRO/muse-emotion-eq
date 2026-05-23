@@ -415,7 +415,8 @@ def _pick_scene_hysteresis(current, arousal, valence):
 class SeaWidget(QWidget):
     """動画背景 (cv2) + オーバーレイ描画. 感情で3本をクロスフェード."""
 
-    CROSSFADE_SEC = 2.5
+    # zone 切替フェードは短めに (ユーザ要望: 「遷移は滑らかでなくていい」).
+    CROSSFADE_SEC = 0.8
     TARGET_FPS = 30
 
     def __init__(self, parent=None):
