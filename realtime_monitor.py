@@ -4715,44 +4715,46 @@ class MainWindow(QtWidgets.QMainWindow):
         t = (time.monotonic() - self._watch_demo_t0) % 60.0
 
         if t < 30.0:
-            # ============ Phase A: Surface — EEG 連続変化 → 嵐 ============
+            # ============ Phase A: Surface — EEG 連続変化 ============
             target_sub = "surface"
             u = t / 30.0   # 0..1
             # 0→1 で滑らかな ease in-out (smoothstep)
             s = u * u * (3.0 - 2.0 * u)
 
-            # 開始 (Calm baseline)  →  終端 (Storm)
-            #   Arousal:    0.25  →  0.90   (覚醒↑)
-            #   Valence:    0.65  →  0.20   (快→不快)
-            #   Engagement: 0.40  →  0.70   (集中↑)
-            arousal = 0.25 + 0.65 * s + 0.035 * _m.sin(t * 0.7)
-            valence = 0.65 - 0.45 * s + 0.025 * _m.sin(t * 0.5 + 1.2)
-            engagement = 0.40 + 0.30 * s + 0.030 * _m.sin(t * 0.4)
+            # 開始 (Calm baseline)  →  終端 (やや嵐寄り、抑えめ)
+            #   Arousal:    0.30  →  0.72   (覚醒↑、極端は避ける)
+            #   Valence:    0.62  →  0.32   (快→不快、ストレス手前)
+            #   Engagement: 0.42  →  0.62   (集中↑)
+            # 実音楽リスニングで到達可能なリアル寄りレンジ.
+            arousal = 0.30 + 0.42 * s + 0.025 * _m.sin(t * 0.7)
+            valence = 0.62 - 0.30 * s + 0.020 * _m.sin(t * 0.5 + 1.2)
+            engagement = 0.42 + 0.20 * s + 0.025 * _m.sin(t * 0.4)
             # クランプ
             arousal = max(0.0, min(1.0, arousal))
             valence = max(0.0, min(1.0, valence))
             engagement = max(0.0, min(1.0, engagement))
             # HR は EEG に弱く連動 (副次的・Surface では使われない)
-            hr = 65.0 + 25.0 * s + 1.5 * _m.sin(t * 0.8)
-            # phase ラベル (toast 用)
-            phase_label = ("CALM" if u < 0.25 else
-                           "RISING" if u < 0.55 else
-                           "INTENSE" if u < 0.85 else "🌩 STORM")
+            hr = 65.0 + 15.0 * s + 1.5 * _m.sin(t * 0.8)
+            # phase ラベル
+            phase_label = ("CALM" if u < 0.30 else
+                           "RISING" if u < 0.65 else
+                           "INTENSE" if u < 0.90 else "STORMY")
 
         else:
-            # ============ Phase B: Underwater — HR 連続変化 ============
+            # ============ Phase B: Underwater — HR 連続変化 (抑えめ) ============
             target_sub = "underwater"
             local_t = t - 30.0   # 0..30
             u = local_t / 30.0   # 0..1
 
-            # HR: 60 → 110 → 60 を sin arc で描く. ピーク = local_t=15s.
-            #   LOW (<75)  →  MID (75-90)  →  HIGH (>90)  →  MID  →  LOW
-            hr = 60.0 + 50.0 * _m.sin(_m.pi * u) + 2.5 * _m.sin(local_t * 1.1)
-            hr = max(50.0, min(120.0, hr))
+            # HR: 62 → 92 → 62 を sin arc で. ピーク = local_t=15s.
+            #   LOW (<75)  →  MID (75-90)  →  ちょい HIGH 触る  →  MID  →  LOW
+            # 30 BPM レンジ = 通常リスニング + 軽運動相当の現実的振幅.
+            hr = 62.0 + 30.0 * _m.sin(_m.pi * u) + 1.8 * _m.sin(local_t * 1.1)
+            hr = max(55.0, min(100.0, hr))
             # Underwater では EEG はベースライン (心拍主導なので)
-            arousal = 0.50 + 0.05 * _m.sin(local_t * 0.3)
-            valence = 0.55 + 0.05 * _m.sin(local_t * 0.25)
-            engagement = 0.45 + 0.05 * _m.sin(local_t * 0.4)
+            arousal = 0.48 + 0.04 * _m.sin(local_t * 0.3)
+            valence = 0.55 + 0.04 * _m.sin(local_t * 0.25)
+            engagement = 0.45 + 0.04 * _m.sin(local_t * 0.4)
             # phase ラベル
             zone = ("LOW" if hr < 75 else "MID" if hr < 90 else "HIGH")
             phase_label = f"♥ {int(hr)} BPM · {zone}"
