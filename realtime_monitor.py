@@ -4402,29 +4402,30 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _key_num(self, n):
         """1/2/3/4 キーの context-aware 処理.
-        Watch モード: Surface/Underwater/City/Forest にサブビュー切替.
-        その他: Studio/Listen/Watch にモード切替 (4 は何もしない).
+        Watch モード: 1=Surface (EEG駆動) / 2=Underwater (HR駆動).
+                     3/4 は廃止 (City/Forest を 2026-05 に削除).
+        その他: 1=Studio / 2=Listen / 3=Watch.
         """
         if getattr(self, "_mode", "studio") == "watch":
             sea = getattr(self, "sea_widget", None)
             if sea is None:
                 return
-            sub_map = {1: ("surface", "🌅 Surface"),
-                       2: ("underwater", "🐳 Underwater"),
-                       3: ("city", "🌆 City"),
-                       4: ("forest", "🌲 Forest")}
+            # Watch は 2 ビュー構成. 駆動源を toast に明示する.
+            sub_map = {1: ("surface", "🌊 Surface  ·  🧠 EEG-driven"),
+                       2: ("underwater", "🌊 Underwater  ·  ♥ HR-driven")}
             if n in sub_map:
                 key, label = sub_map[n]
-                if sea.set_sub_view(key) is None:
-                    pass
+                sea.set_sub_view(key)
                 # ボタン UI も同期
                 if key in getattr(sea, "_sub_btns", {}):
-                    sea._sub_btns[key].setChecked(True)
                     for k, b in sea._sub_btns.items():
                         b.setChecked(k == key)
                     if hasattr(sea, "_restyle_sub_btns"):
                         sea._restyle_sub_btns()
                 self._show_toast(label)
+            elif n in (3, 4):
+                self._show_toast(
+                    "Removed — Watch is now 2 views (Surface / Underwater)")
         else:
             mode_map = {1: "studio", 2: "listen", 3: "watch"}
             if n in mode_map:
@@ -4671,10 +4672,8 @@ class MainWindow(QtWidgets.QMainWindow):
             "<tr><td><b>2</b></td><td>🎚 Listen mode</td></tr>"
             "<tr><td><b>3</b></td><td>🌊 Watch mode</td></tr>"
             "<tr><td colspan=2><b>— In Watch mode —</b></td></tr>"
-            "<tr><td><b>1</b></td><td>🌅 Surface</td></tr>"
-            "<tr><td><b>2</b></td><td>🐳 Underwater</td></tr>"
-            "<tr><td><b>3</b></td><td>🌆 City</td></tr>"
-            "<tr><td><b>4</b></td><td>🌲 Forest</td></tr>"
+            "<tr><td><b>1</b></td><td>🌊 Surface &nbsp; 🧠 EEG-driven</td></tr>"
+            "<tr><td><b>2</b></td><td>🌊 Underwater &nbsp; ♥ HR-driven</td></tr>"
             "<tr><td colspan=2><b>— Anywhere —</b></td></tr>"
             "<tr><td><b>Ctrl + 1/2/3</b></td><td>Mode switch from anywhere</td></tr>"
             "<tr><td><b>Space</b></td><td>♪ Audio ON/OFF</td></tr>"

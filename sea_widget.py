@@ -26,7 +26,7 @@ os.environ.setdefault("OPENCV_FFMPEG_LOGLEVEL", "-8")
 os.environ.setdefault("OPENCV_LOG_LEVEL", "OFF")
 
 from PyQt5.QtCore import QPointF, QRectF, Qt, QTimer
-from PyQt5.QtGui import (QColor, QImage, QPainter, QPen, QPixmap,
+from PyQt5.QtGui import (QColor, QFont, QImage, QPainter, QPen, QPixmap,
                          QRadialGradient)
 from PyQt5.QtWidgets import QWidget
 
@@ -72,12 +72,9 @@ VIDEO_UNDERWATER_LOW = os.path.join(ASSETS_DIR, "sea_underwater_low.mp4")
 VIDEO_UNDERWATER_MID = os.path.join(ASSETS_DIR, "sea_underwater_mid.mp4")
 VIDEO_UNDERWATER_HIGH = os.path.join(ASSETS_DIR, "sea_underwater_high.mp4")
 
-# City 背景 (動画優先、無ければ静止画にフォールバック)
-BG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                       "assets", "bg")
-IMAGE_CITY = os.path.join(BG_DIR, "bg_city.png")
-VIDEO_CITY = os.path.join(ASSETS_DIR, "sea_city.mp4")
-VIDEO_FOREST = os.path.join(ASSETS_DIR, "sea_forest.mp4")
+# 注: City / Forest サブビューは 2026-05 に廃止.
+# Watch は Surface (🧠 EEG 駆動) / Underwater (♥ HR 駆動) の 2 ビュー構成に統一.
+# 旧アセット (sea_city.mp4 / sea_forest.mp4 / bg_city.png) は LFS 履歴のため残置.
 
 # 水中シーン HR 閾値 (ヒステリシス)
 HR_MID_ENTER = 75.0   # ≥ ここで low → mid
@@ -376,30 +373,10 @@ class SeaWidget(QWidget):
         self._fade_start = 0.0
         self._fading = False
 
-        # ===== City 背景 (動画優先) =====
-        self._city_video = None
-        self._city_image = None
-        if os.path.exists(VIDEO_CITY):
-            v = _VideoSource(VIDEO_CITY)
-            if v.available:
-                self._city_video = v
-        if self._city_video is None and os.path.exists(IMAGE_CITY):
-            self._city_image = QImage(IMAGE_CITY)
-            if self._city_image.isNull():
-                self._city_image = None
-        self._city_available = (self._city_video is not None
-                                 or self._city_image is not None)
-
-        # ===== Forest 背景 (動画) =====
-        self._forest_video = None
-        if os.path.exists(VIDEO_FOREST):
-            v = _VideoSource(VIDEO_FOREST)
-            if v.available:
-                self._forest_video = v
-        self._forest_available = self._forest_video is not None
-
         # ===== Underwater モード =====
-        # サブビュー切替 ("surface" / "underwater" / "city")
+        # サブビュー切替 ("surface" / "underwater")
+        # surface = 🧠 EEG (Arousal/Valence/Engagement) で動く
+        # underwater = ♥ HR (心拍) で動く
         self._sub_view = "surface"
         self._uw_sources = {}
         for name, path in [("low", VIDEO_UNDERWATER_LOW),
@@ -426,34 +403,25 @@ class SeaWidget(QWidget):
         h.setContentsMargins(8, 8, 8, 8)
         h.setSpacing(4)
         self._sub_btns = {}
-        for key, label in [("surface", "🌅 Surface"),
-                            ("underwater", "🐳 Underwater"),
-                            ("city", "🌆 City"),
-                            ("forest", "🌲 Forest")]:
+        # 駆動源をボタン文言に明記 ("見た人がすぐ何で動くか分かる" 設計)
+        for key, label in [("surface", "🌊 Surface  ·  🧠 EEG"),
+                            ("underwater", "🌊 Underwater  ·  ♥ HR")]:
             b = QPushButton(label)
             b.setCheckable(True)
             b.setCursor(Qt.PointingHandCursor)
-            b.setFixedHeight(26)
+            b.setFixedHeight(28)
             b.clicked.connect(lambda _, k=key: self.set_sub_view(k))
             h.addWidget(b)
             self._sub_btns[key] = b
         self._sub_btns["surface"].setChecked(True)
         h.addStretch()
         self._sub_btns_widget.move(8, 8)
-        self._sub_btns_widget.resize(460, 42)
+        self._sub_btns_widget.resize(420, 44)
         self._restyle_sub_btns()
         if not self._uw_available:
             self._sub_btns["underwater"].setEnabled(False)
             self._sub_btns["underwater"].setToolTip(
                 "水中動画 (sea_underwater_*.mp4) が見つかりません")
-        if not self._city_available:
-            self._sub_btns["city"].setEnabled(False)
-            self._sub_btns["city"].setToolTip(
-                "City 動画/画像 (sea_city.mp4 / bg_city.png) が見つかりません")
-        if not self._forest_available:
-            self._sub_btns["forest"].setEnabled(False)
-            self._sub_btns["forest"].setToolTip(
-                "Forest 動画 (sea_forest.mp4) が見つかりません")
         # シーン選択専用の slow EMA (描画用とは別系統)
         self._scene_a = 0.5
         self._scene_v = 0.5
@@ -518,13 +486,9 @@ class SeaWidget(QWidget):
         self._rings.append((time.monotonic(), float(strength)))
 
     def set_sub_view(self, name):
-        if name not in ("surface", "underwater", "city", "forest"):
+        if name not in ("surface", "underwater"):
             return
         if name == "underwater" and not self._uw_available:
-            return
-        if name == "city" and not self._city_available:
-            return
-        if name == "forest" and not self._forest_available:
             return
         if name == self._sub_view:
             return
@@ -685,18 +649,7 @@ class SeaWidget(QWidget):
         self._bubbles = alive[:180]
 
         # 動画フレーム更新
-        if self._sub_view == "forest":
-            if self._forest_video is not None:
-                # Forest は静寂寄り: Engagement (集中) 高で少し速く
-                rate = 0.6 + self._c["engagement"] * 0.5
-                self._forest_video.set_rate(rate)
-                self._forest_video.update(now)
-        elif self._sub_view == "city":
-            if self._city_video is not None:
-                rate = 0.7 + self._c["arousal"] * 0.5
-                self._city_video.set_rate(rate)
-                self._city_video.update(now)
-        elif self._sub_view == "underwater" and self._uw_available:
+        if self._sub_view == "underwater" and self._uw_available:
             # 水中: 現在シーン + 遷移先シーンを両方デコード (crossfade)
             rate = 0.7 + self._c["arousal"] * 0.4   # 覚醒で少し速く
             active = {self._uw_current, self._uw_target}
@@ -764,11 +717,7 @@ class SeaWidget(QWidget):
                 y = (h - draw_h) // 2
             qp.drawImage(QRectF(x, y, draw_w, draw_h), img)
 
-        if self._sub_view == "forest" and self._forest_available:
-            self._draw_forest_frame(qp, w, h)
-        elif self._sub_view == "city" and self._city_available:
-            self._draw_city_frame(qp, w, h)
-        elif self._sub_view == "underwater" and self._uw_available:
+        if self._sub_view == "underwater" and self._uw_available:
             self._draw_underwater_frame(qp, w, h, now)
         elif self._use_morph:
             self._draw_morph_frame(qp, w, h)
@@ -845,101 +794,70 @@ class SeaWidget(QWidget):
                                             flash_alpha))
                 qp.fillRect(QRectF(0, 0, w, h), fg)
 
+        # --- 駆動源バッジ (top-right) ---
+        # 「この映像は何で動いているか」を一目で見せる. デモを見る人向け.
+        self._paint_driver_badge(qp, w, h)
+
         qp.end()
 
-    def _draw_forest_frame(self, qp, w, h):
-        """Forest モード: 動画 + 静かな tint (Engagement で柔らかさ調整)."""
-        if self._forest_video is None:
-            return
-        img = self._forest_video.image()
-        if img is None:
-            return
-        src_ratio = img.width() / max(1, img.height())
-        dst_ratio = w / max(1, h)
-        if src_ratio > dst_ratio:
-            draw_h = h
-            draw_w = int(draw_h * src_ratio)
-            x = (w - draw_w) // 2
-            y = 0
-        else:
-            draw_w = w
-            draw_h = int(draw_w / src_ratio)
-            x = 0
-            y = (h - draw_h) // 2
-        qp.drawImage(QRectF(x, y, draw_w, draw_h), img)
+    def _paint_driver_badge(self, qp, w, h):
+        """画面右上に「駆動源 + 現在値」を半透明ピルで常時表示."""
+        if self._sub_view == "surface":
+            title = "🧠  EEG-DRIVEN"
+            a = self._c["arousal"]
+            v = self._c["valence"]
+            e = self._c["engagement"]
+            line2 = f"Arousal {a:.2f}  ·  Valence {v:.2f}  ·  Engage {e:.2f}"
+            accent = QColor(155, 89, 182)   # purple = brain
+        else:   # underwater
+            hr = self._hr_ema
+            zone = self._uw_target.upper() if self._uw_available else "—"
+            title = "♥  HR-DRIVEN"
+            line2 = f"{hr:5.1f} BPM  ·  zone: {zone}"
+            accent = QColor(231, 76, 60)    # red = heart
 
-        # Valence で tint: 低=寒色寄り / 高=暖色寄り
-        v = self._c["valence"]
-        if v > 0.5:
-            r = int(255)
-            g = int(220 + (v - 0.5) * 30)
-            b = int(180 + (v - 0.5) * 40)
-        else:
-            r = int(140 + v * 100)
-            g = int(200)
-            b = int(200 + (0.5 - v) * 30)
-        tint_alpha = int(20 + abs(v - 0.5) * 30)
-        qp.fillRect(QRectF(0, 0, w, h),
-                    QColor(r, g, b, tint_alpha))
+        # ピル背景
+        pad_x, pad_y = 14, 8
+        # フォント測定
+        title_font = QFont("Segoe UI", 9, QFont.Bold)
+        title_font.setLetterSpacing(QFont.AbsoluteSpacing, 1.2)
+        line2_font = QFont("Consolas", 9)
+        qp.setFont(title_font)
+        title_w = qp.fontMetrics().horizontalAdvance(title)
+        qp.setFont(line2_font)
+        line2_w = qp.fontMetrics().horizontalAdvance(line2)
+        pill_w = max(title_w, line2_w) + pad_x * 2
+        pill_h = 38 + pad_y
+        pill_x = w - pill_w - 12
+        pill_y = 12
 
-    def _draw_city_frame(self, qp, w, h):
-        """City モード: 動画 (or 静止画) + HR/PPG 同期の動的演出.
+        # 半透明背景
+        qp.setOpacity(0.92)
+        qp.setPen(QPen(QColor(accent.red(), accent.green(),
+                              accent.blue(), 180), 1.4))
+        qp.setBrush(QColor(15, 15, 18, 220))
+        qp.drawRoundedRect(QRectF(pill_x, pill_y, pill_w, pill_h),
+                           pill_h / 2, pill_h / 2)
 
-        - HR が高い (覚醒モード) → マゼンタ寄り tint + 明度 UP
-        - HR が低い (落ち着き)    → シアン寄り tint + 明度ダウン
-        - PPG 位相に合わせて全体が**鼓動 pulse**
-        - 覚醒度に応じて軽くズーム
-        """
-        import math as _m
-        # 動画優先、無ければ静止画
-        if self._city_video is not None:
-            img = self._city_video.image()
-        else:
-            img = self._city_image
-        if img is None:
-            return
-        # HR と PPG phase
-        hr = self._hr_ema
-        bpm_active = hr if hr > 20 else 60.0
-        # HR から 0..1 に正規化 (50–100 BPM 範囲)
-        hr_norm = max(0.0, min(1.0, (bpm_active - 50.0) / 50.0))
-        # 鼓動 pulse (PPG phase は SeaWidget._pulse_phase が _tick で進む)
-        x_phase = self._pulse_phase % (2 * _m.pi)
-        beat = _m.exp(-((x_phase - 0.6) ** 2) * 8.0)   # 1 拍ごとの短いピーク
-        beat_intensity = 0.5 + 0.5 * beat   # 0.5..1.0
+        # アクセント縦バー (左端)
+        qp.setPen(Qt.NoPen)
+        qp.setBrush(accent)
+        qp.drawRoundedRect(
+            QRectF(pill_x + 6, pill_y + 8, 3, pill_h - 16), 1.5, 1.5)
 
-        # ズーム (覚醒で少し拡大)
-        zoom = 1.0 + 0.05 * self._c["arousal"]
-        src_ratio = img.width() / max(1, img.height())
-        dst_ratio = w / max(1, h)
-        if src_ratio > dst_ratio:
-            draw_h = int(h * zoom)
-            draw_w = int(draw_h * src_ratio)
-        else:
-            draw_w = int(w * zoom)
-            draw_h = int(draw_w / src_ratio)
-        x = (w - draw_w) // 2
-        y = (h - draw_h) // 2
-        qp.drawImage(QRectF(x, y, draw_w, draw_h), img)
-
-        # HR でカラーティント (低HR=cyan / 高HR=magenta) + 拍動明度
-        # cyan (0, 200, 255) ↔ magenta (255, 60, 200) で hr_norm 補間
-        r = int(0 + 255 * hr_norm)
-        g = int(200 - 140 * hr_norm)
-        b = int(255 - 55 * hr_norm)
-        tint_alpha = int(45 * (0.6 + 0.4 * beat_intensity))
-        qp.fillRect(QRectF(0, 0, w, h),
-                    QColor(r, g, b, tint_alpha))
-
-        # 鼓動 vignette: 画面中心がフラッシュ
-        if beat_intensity > 0.7:
-            cx, cy = w / 2, h / 2
-            grad = QRadialGradient(QPointF(cx, cy),
-                                          max(w, h) * 0.5)
-            flash_alpha = int(60 * (beat_intensity - 0.7) * 3.0)
-            grad.setColorAt(0.0, QColor(r, g, b, flash_alpha))
-            grad.setColorAt(1.0, QColor(r, g, b, 0))
-            qp.fillRect(QRectF(0, 0, w, h), grad)
+        # タイトル
+        qp.setFont(title_font)
+        qp.setPen(accent)
+        qp.drawText(QRectF(pill_x + pad_x, pill_y + 6,
+                           pill_w - pad_x * 2, 16),
+                    Qt.AlignLeft | Qt.AlignVCenter, title)
+        # 2行目 (現在値)
+        qp.setFont(line2_font)
+        qp.setPen(QColor(230, 230, 230))
+        qp.drawText(QRectF(pill_x + pad_x, pill_y + 22,
+                           pill_w - pad_x * 2, 16),
+                    Qt.AlignLeft | Qt.AlignVCenter, line2)
+        qp.setOpacity(1.0)
 
     def _draw_underwater_frame(self, qp, w, h, now):
         """Underwater モード: low/mid/high 動画を crossfade."""
@@ -1065,10 +983,6 @@ class SeaWidget(QWidget):
     def stop(self):
         if self._morph_source is not None:
             self._morph_source.release()
-        if self._city_video is not None:
-            self._city_video.release()
-        if self._forest_video is not None:
-            self._forest_video.release()
         for src in self._uw_sources.values():
             src.release()
         for src in self._sources.values():
