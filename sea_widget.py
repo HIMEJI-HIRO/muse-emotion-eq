@@ -76,11 +76,10 @@ VIDEO_UNDERWATER_HIGH = os.path.join(ASSETS_DIR, "sea_underwater_high.mp4")
 # Watch は Surface (🧠 EEG 駆動) / Underwater (♥ HR 駆動) の 2 ビュー構成に統一.
 # 旧アセット (sea_city.mp4 / sea_forest.mp4 / bg_city.png) は LFS 履歴のため残置.
 
-# 水中シーン HR 閾値 (ヒステリシス)
-HR_MID_ENTER = 75.0   # ≥ ここで low → mid
-HR_MID_EXIT  = 65.0   # ≤ ここで mid → low
-HR_HIGH_ENTER = 92.0
-HR_HIGH_EXIT  = 82.0
+# 水中シーン HR 閾値 (2 ゾーンに簡略化)
+# LOW (サンゴ礁 + 魚) ↔ HIGH (ジンベエザメ) の 2 段階. ヒステリシス幅 10 BPM.
+HR_HIGH_ENTER = 82.0   # ≥ ここで LOW → HIGH (ジンベエ登場)
+HR_HIGH_EXIT  = 72.0   # ≤ ここで HIGH → LOW (サンゴ礁に戻る)
 HR_MIN_DWELL_SEC = 6.0
 HR_EMA_ALPHA = 0.02   # ~3秒 τ
 
@@ -438,16 +437,15 @@ class SeaWidget(QWidget):
         # underwater = ♥ HR (心拍) で動く
         self._sub_view = "surface"
         self._uw_sources = {}
-        # 動画ごとに「最初に subject (魚/ジンベエ) が映る目安の秒数」を指定.
-        # この値ぶん seek してから再生開始する → 起動直後やシーン切替時に
-        # 「何もない空っぽの水中」を見せない.
+        # 2 ゾーン構成:
+        #   "low"  -> sea_underwater_mid.mp4  (サンゴ礁 + 魚群 = 平常)
+        #   "high" -> sea_underwater_high.mp4 (ジンベエザメ = 興奮)
+        # ※ sea_underwater_low.mp4 (空っぽの水中) は今後使わない.
         uw_warmup = {
-            "low": 1.5,    # サンゴ礁: 1.5秒目で構図完成
-            "mid": 2.0,    # 魚群:    2秒目で密度ピーク
-            "high": 3.0,   # ジンベエ: 3秒目でジンベエが画面中央寄りに
+            "low": 2.0,    # サンゴ礁: 2秒目で魚群密度ピーク
+            "high": 3.0,   # ジンベエ: 3秒目でジンベエが画面中央寄り
         }
-        for name, path in [("low", VIDEO_UNDERWATER_LOW),
-                             ("mid", VIDEO_UNDERWATER_MID),
+        for name, path in [("low", VIDEO_UNDERWATER_MID),
                              ("high", VIDEO_UNDERWATER_HIGH)]:
             src = _VideoSource(path)
             if src.available:
@@ -606,29 +604,19 @@ class SeaWidget(QWidget):
             self._sub_btns_widget.move(8, 8)
         super().resizeEvent(event)
 
-    # --- Underwater シーン切替 (HR ヒステリシス) -----------------------
+    # --- Underwater シーン切替 (HR ヒステリシス, 2 ゾーン) ---------------
     def _update_underwater_scene(self):
-        """HR EMA に応じて Underwater シーン (low/mid/high) を決定."""
+        """HR EMA に応じて LOW (サンゴ礁) ↔ HIGH (ジンベエ) を切替.
+        ヒステリシス: ENTER 82 / EXIT 72 BPM. dwell 6 秒."""
         if not self._uw_available:
             return
         cur = self._uw_target
         hr = self._hr_ema
         want = cur
-        if cur == "low":
-            if hr >= HR_HIGH_ENTER:
-                want = "high"
-            elif hr >= HR_MID_ENTER:
-                want = "mid"
-        elif cur == "mid":
-            if hr >= HR_HIGH_ENTER:
-                want = "high"
-            elif hr <= HR_MID_EXIT:
-                want = "low"
-        elif cur == "high":
-            if hr <= HR_HIGH_EXIT and hr >= HR_MID_ENTER:
-                want = "mid"
-            elif hr <= HR_MID_EXIT:
-                want = "low"
+        if cur == "low" and hr >= HR_HIGH_ENTER:
+            want = "high"
+        elif cur == "high" and hr <= HR_HIGH_EXIT:
+            want = "low"
         if want != cur and want in self._uw_sources:
             now = time.monotonic()
             if (now - self._uw_last_switch) >= HR_MIN_DWELL_SEC:

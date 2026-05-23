@@ -1100,7 +1100,7 @@ class _DemoExplainOverlay(QtWidgets.QFrame):
             ("RISING", self.EEG_ACCENT),
             ("INTENSE", self.EEG_ACCENT),
             ("STORMY", self.EEG_ACCENT),
-            ("HR-arc", self.HR_ACCENT),
+            ("🐋 HR", self.HR_ACCENT),
         ]
         for label, color in seg_defs:
             seg = QtWidgets.QLabel(label)
@@ -1246,13 +1246,16 @@ class _DemoExplainOverlay(QtWidgets.QFrame):
         hr_norm = max(0.0, min(1.0, (hr - 50.0) / 70.0))
         self._bpm_bar.setValue(int(hr_norm * 1000))
         self._bpm_val.setText(f"{int(hr)}")
-        # zone
-        zone = ("LOW" if hr < 75 else "MID" if hr < 90 else "HIGH")
-        zone_color = {"LOW": "#5fc7ff", "MID": "#7ce8a0",
-                      "HIGH": "#ff7aa0"}[zone]
-        self._zone_lbl.setText(zone)
+        # zone (2 段階: 閾値 82 BPM)
+        if hr >= 82:
+            zone_text = "HIGH  🐋"
+            zone_color = "#ff7aa0"
+        else:
+            zone_text = "LOW  🐠"
+            zone_color = "#5fc7ff"
+        self._zone_lbl.setText(zone_text)
         self._zone_lbl.setStyleSheet(
-            f"font-family: 'Consolas'; font-size: 12px; "
+            f"font-family: 'Consolas'; font-size: 15px; "
             f"font-weight: bold; color: {zone_color};")
         # 解説
         self._expl_lbl.setText(explanation)
@@ -5082,52 +5085,50 @@ class MainWindow(QtWidgets.QMainWindow):
                            "INTENSE" if u < 0.90 else "STORMY")
 
         else:
-            # ============ Phase B: Underwater — HR 連続変化 ============
-            # 全 3 シーン (LOW=浅瀬 / MID=魚群 / HIGH=ジンベエザメ) を
-            # 確実に表示するための台形カーブ.
+            # ============ Phase B: Underwater — HR 連続変化 (2 ゾーン) =====
+            # シーン: LOW=サンゴ礁+魚 / HIGH=ジンベエ.
             # sea_widget.py の閾値:
-            #   HR_HIGH_ENTER=92 / HR_HIGH_EXIT=82
-            #   HR_MID_ENTER=75  / HR_MID_EXIT=65
+            #   HR_HIGH_ENTER=82 / HR_HIGH_EXIT=72
             #   HR_MIN_DWELL_SEC=6  / CROSSFADE_SEC=2.5
-            # → HIGH を「2.5(in) + 6+(visible) + 2.5(out)」で約 13s 滞在.
             #
-            #   0- 3s  LOW    (60 BPM, ベースライン)
-            #   3- 9s  rise   (60 → 102, 全ゾーンを通過)
-            #   9-22s  HIGH   (100 ± 3, ジンベエ シーン 13秒固定)
-            #  22-28s  descend(100 → 62, HIGH→MID→LOW 逆順通過)
-            #  28-30s  LOW    (60 BPM, クールダウン)
+            #   0- 4s  LOW   (65 BPM, サンゴ礁で魚をしっかり泳がせる)
+            #   4- 8s  rise  (65 → 92,  enter trigger 82 を上方向に余裕で超え)
+            #   8-22s  HIGH  (92 ± 3,  ジンベエが画面を泳ぐ 14 秒)
+            #  22-26s  descend(92 → 68,  exit trigger 72 を下方向に余裕で下回り)
+            #  26-30s  LOW   (65 BPM, サンゴ礁に戻ってまた魚を見せる)
             target_sub = "underwater"
             local_t = t - 30.0   # 0..30
             u = local_t / 30.0   # 0..1
 
-            if local_t < 3.0:
-                # ベースライン LOW
-                hr = 60.0 + 0.8 * _m.sin(local_t * 0.5)
-            elif local_t < 9.0:
-                # smoothstep で 60 → 102
-                p = (local_t - 3.0) / 6.0
+            if local_t < 4.0:
+                # ベースライン LOW (サンゴ礁 dwelling)
+                hr = 65.0 + 1.0 * _m.sin(local_t * 0.6)
+            elif local_t < 8.0:
+                # smoothstep で 65 → 92 (LOW → HIGH 切替)
+                p = (local_t - 4.0) / 4.0
                 s_hr = p * p * (3.0 - 2.0 * p)
-                hr = 60.0 + 42.0 * s_hr + 0.6 * _m.sin(local_t * 0.6)
+                hr = 65.0 + 27.0 * s_hr + 0.6 * _m.sin(local_t * 0.7)
             elif local_t < 22.0:
-                # HIGH プラトー (常に >92, 微振動だけ)
-                hr = 100.0 + 2.8 * _m.sin((local_t - 9.0) * 0.55)
-            elif local_t < 28.0:
-                # smoothstep で 100 → 62 (HIGH→MID→LOW を順に通過)
-                p = (local_t - 22.0) / 6.0
+                # HIGH プラトー (>82 維持, ジンベエが泳ぎ続ける)
+                hr = 92.0 + 4.0 * _m.sin((local_t - 8.0) * 0.45)
+            elif local_t < 26.0:
+                # smoothstep で 92 → 68 (HIGH → LOW 切替)
+                p = (local_t - 22.0) / 4.0
                 s_hr = p * p * (3.0 - 2.0 * p)
-                hr = 100.0 - 38.0 * s_hr + 0.6 * _m.sin(local_t * 0.6)
+                hr = 92.0 - 24.0 * s_hr + 0.6 * _m.sin(local_t * 0.7)
             else:
-                # クールダウン LOW
-                hr = 62.0 + 0.8 * _m.sin(local_t * 0.5)
+                # 戻ってきた LOW (サンゴ礁 dwelling, 魚をまた見せる)
+                hr = 65.0 + 1.0 * _m.sin(local_t * 0.6)
 
-            hr = max(55.0, min(110.0, hr))
+            hr = max(55.0, min(105.0, hr))
             # Underwater では EEG はベースライン (心拍主導なので)
             arousal = 0.48 + 0.04 * _m.sin(local_t * 0.3)
             valence = 0.55 + 0.04 * _m.sin(local_t * 0.25)
             engagement = 0.45 + 0.04 * _m.sin(local_t * 0.4)
-            # phase ラベル
-            zone = ("LOW" if hr < 75 else "MID" if hr < 90 else "HIGH")
-            phase_label = f"♥ {int(hr)} BPM · {zone}"
+            # phase ラベル (2 ゾーン)
+            zone = "HIGH" if hr >= 82 else "LOW"
+            scene_name = "🐋 Whale shark" if zone == "HIGH" else "🐠 Coral reef"
+            phase_label = f"♥ {int(hr)} BPM · {scene_name}"
 
         # --- Sea widget に注入 ---
         sea = getattr(self, "sea_widget", None)
@@ -5187,27 +5188,27 @@ class MainWindow(QtWidgets.QMainWindow):
                     "Storm シーン発動条件 (A>0.6 ∧ V<0.4) を満たし、海面が荒れる.")
         else:
             local_t = t - 30.0
-            if local_t < 3.0:
+            if local_t < 4.0:
                 explanation = (
-                    "ベースライン LOW (60 BPM). スロー曲 / 瞑想音楽で安静中. "
-                    "光あふれる浅瀬を漂う.")
-            elif local_t < 9.0:
+                    "🐠 LOW zone (65 BPM). サンゴ礁を魚たちが泳ぐ平常状態. "
+                    "ヒーリング系・ローテンポ曲を聴いている安静ベースライン.")
+            elif local_t < 8.0:
                 explanation = (
-                    "心拍が上昇中 (60 → 100 BPM). アップテンポへ移行. "
-                    "LOW → MID → HIGH と全ゾーンを順に通過. 視界が深くなる.")
+                    "心拍が上昇中 (65 → 92 BPM). アップテンポへ移行. "
+                    "閾値 82 BPM を超えるとシーンが切り替わる.")
             elif local_t < 22.0:
                 explanation = (
-                    "HIGH zone 維持 (≈100 BPM). 激しい曲 + 軽い身体活動. "
-                    "深層: 🐋 ジンベエザメ + マンタが視界に入る最深シーン. "
-                    "(6 秒以上 dwell して見せ場を作る)")
-            elif local_t < 28.0:
+                    "🐋 HIGH zone (≈92 BPM). 激しい曲 / 軽い身体活動. "
+                    "ジンベエザメが画面を泳ぐ 14 秒の見せ場. "
+                    "(dwell ロック + クロスフェードで安定再生)")
+            elif local_t < 26.0:
                 explanation = (
-                    "クールダウン中 (100 → 62 BPM). 曲が落ち着き心拍も下降. "
-                    "HIGH → MID → LOW を逆順に通過して浅瀬へ戻る.")
+                    "クールダウン中 (92 → 68 BPM). 曲が落ち着き心拍も下降. "
+                    "閾値 72 BPM を下回るとサンゴ礁に戻る.")
             else:
                 explanation = (
-                    "LOW zone へ着地. 1 サイクル完了. "
-                    "次は Surface 側 (脳波駆動) からループ再開.")
+                    "🐠 LOW zone へ戻った. サンゴ礁で魚をまた泳がせる. "
+                    "次は Surface (脳波駆動) からループ再開.")
 
         # 説明パネルに反映
         if hasattr(self, "_watch_demo_panel") and \

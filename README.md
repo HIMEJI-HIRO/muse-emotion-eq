@@ -82,8 +82,8 @@ Muse S Athena の EEG / PPG から感情を推定し、
 <td align="center" width="50%">
 <img src="docs/images/ui_watch_underwater_high.png" alt="Underwater"><br>
 <b>🌊 Underwater  ·  ♥ HR-driven</b><br>
-<sub>HR ヒステリシスで LOW / MID / HIGH の 3 シーンをクロスフェード.<br>
-画面右上に <code>♥ HR-DRIVEN  ·  72.4 BPM  ·  zone: MID</code> オーバーレイ.</sub>
+<sub>HR 閾値 82 BPM のヒステリシスで <b>🐠 サンゴ礁</b> ↔ <b>🐋 ジンベエザメ</b> の 2 シーンをクロスフェード.<br>
+画面右上に <code>♥ HR-DRIVEN  ·  92 BPM  ·  zone: HIGH 🐋</code> オーバーレイ.</sub>
 </td>
 </tr>
 </table>
@@ -95,10 +95,10 @@ Watch 右上の **`▶ Demo`** ボタンで起動. 60 秒ループで EEG/HR を
 
 ```
 0s ────────── 30s ────────── 60s
-🧠 Surface (EEG)            ♥ Underwater (HR)
-CALM → RISING → INTENSE → STORMY      LOW → MID → HIGH → MID → LOW
-A: 0.30 → 0.72                        BPM: 62 → 92 → 62
-V: 0.62 → 0.32                        zone: 全 3 段階を巡回
+🧠 Surface (EEG)                    ♥ Underwater (HR)
+CALM → RISING → INTENSE → STORMY    🐠 サンゴ礁 → 🐋 ジンベエ → 🐠 サンゴ礁
+A: 0.30 → 0.72                      BPM: 65 → 92 → 65
+V: 0.62 → 0.32                      zone: LOW → HIGH (14s) → LOW
 E: 0.42 → 0.62
 ```
 
