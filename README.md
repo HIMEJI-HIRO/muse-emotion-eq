@@ -69,20 +69,42 @@ Muse S Athena の EEG / PPG から感情を推定し、
 
 <table>
 <tr>
-<td align="center" width="33%">
+<td valign="top" width="33%">
 <img src="docs/images/ui_studio.png" alt="Studio"><br>
-<b>🧠 Studio</b><br>
-<sub>分析: パーティクル EEG / Band Ring / Russell Pad / Adaptive EQ</sub>
+<b>🧠 Studio  ·  分析モード</b>
+<p align="left">
+<sub>
+4ch の <b>生 EEG 波形</b>、<b>スペクトログラム</b>、<b>バンドパワー</b> (δθαβγ)、
+<b>信号品質</b>、<b>Russell 感情座標</b>、<b>HR / fNIRS 波形</b> を 1 画面に並べ、
+脳波がどう感情と音に変換されているかを<b>同時に観察</b>できる開発・分析向けレイアウト.
+6 バンドフェーダで <b>Auto ↔ Manual</b> 切替、カードはドラッグで並び替え可能.
+</sub>
+</p>
 </td>
-<td align="center" width="33%">
+<td valign="top" width="33%">
 <img src="docs/images/ui_listen.png" alt="Listen"><br>
-<b>🎚 Listen</b><br>
-<sub>操作: リボン感情バー / 楽器サークル / 心拍ミニ波形 / クリック ±0.5dB</sub>
+<b>🎚 Listen  ·  操作モード</b>
+<p align="left">
+<sub>
+画面中央に大きな <b>感情ラベル</b> と <b>BRAIN POWER 流れる波形</b>、その下に
+<b>HEART RATE</b> (♥ XX BPM + PPG ミニ波形)、最下段に <b>6 つの楽器サークル</b>.
+サークルを<b>クリック</b>: 上半分で <b>+0.5dB</b> / 下半分で <b>-0.5dB</b>.
+6 種類の<b>プリセット</b> (Vocal / Drums / Spatial 等) と Reverb スライダで瞬時に音作り.
+</sub>
+</p>
 </td>
-<td align="center" width="33%">
+<td valign="top" width="33%">
 <img src="docs/images/ui_watch_surface.png" alt="Watch"><br>
-<b>🌊 Watch</b><br>
-<sub>没入: 神経網オーブ / Matrix rain / Tron grid / 海映像 + Driver Badge</sub>
+<b>🌊 Watch  ·  没入モード</b>
+<p align="left">
+<sub>
+操作 UI を排して<b>映像と音だけ</b>に集中. <b>🌊 Surface</b> (脳波駆動の海面 morph)
+と <b>🌊 Underwater</b> (心拍駆動の 🐠 サンゴ礁 ↔ 🐋 ジンベエ) の 2 サブビュー.
+中央に <b>神経網オーブ</b>、背景に Matrix rain + Tron grid、画面右上の
+<b>Driver Badge</b> が「今この映像は何で動いているか」を常時表示.
+<b>▶ Demo ボタン</b>でヘッドセット無しでも 60 秒の循環体験.
+</sub>
+</p>
 </td>
 </tr>
 </table>
