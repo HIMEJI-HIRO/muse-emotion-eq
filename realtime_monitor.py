@@ -4980,17 +4980,36 @@ class MainWindow(QtWidgets.QMainWindow):
             self._show_toast("⛶ Fullscreen (F11)")
 
     # ============ Demo mode (review without a headset) ============
+    def _reset_underwater_to_low(self):
+        """sea_widget の水中シーンを LOW に強制リセット.
+        EMA や dwell の残留状態を破棄してデモループの開始点を確定させる."""
+        sea = getattr(self, "sea_widget", None)
+        if sea is None:
+            return
+        try:
+            sea._hr_ema = 60.0
+            sea._uw_current = "low"
+            sea._uw_target = "low"
+            sea._uw_fading = False
+            sea._uw_last_switch = time.monotonic() - 100.0  # dwell ロック解除
+            sea._flash_start = 0.0
+        except Exception:
+            pass
+
     def _watch_toggle_demo(self):
         """ON/OFF を切り替えるトグル. ON 中は EEG/HR を模擬値で動かす."""
         if not self._watch_demo_active:
             self._watch_demo_active = True
             self._watch_demo_t0 = time.monotonic()
+            self._watch_demo_last_phase = None  # phase 切替検出用
             self._watch_demo_btn.setChecked(True)
             self._watch_demo_btn.setText("■ Demo")
             self._watch_demo_timer.start(80)   # 12.5 Hz
             if hasattr(self, "_watch_demo_panel"):
                 self._watch_demo_panel.setVisible(True)
                 self._watch_demo_panel.raise_()
+            # デモ開始時に水中シーンを LOW にリセット
+            self._reset_underwater_to_low()
             self._show_toast(
                 "▶  Demo mode ON — EEG/HR を模擬値で循環します")
         else:
@@ -5024,7 +5043,17 @@ class MainWindow(QtWidgets.QMainWindow):
         if not self._watch_demo_active:
             return
         import math as _m
-        t = (time.monotonic() - self._watch_demo_t0) % 60.0
+        raw_elapsed = time.monotonic() - self._watch_demo_t0
+        t = raw_elapsed % 60.0
+
+        # phase / ループ境界を検出 → 水中シーンを LOW にリセット
+        phase_now = "A" if t < 30.0 else "B"
+        last_phase = getattr(self, "_watch_demo_last_phase", None)
+        if last_phase != phase_now:
+            self._watch_demo_last_phase = phase_now
+            # B 開始 (=Underwater 入場) では必ずシーンをリセット
+            # A 開始 (=ループ折り返し) でも念のためリセット
+            self._reset_underwater_to_low()
 
         if t < 30.0:
             # ============ Phase A: Surface — EEG 連続変化 ============
@@ -5103,9 +5132,13 @@ class MainWindow(QtWidgets.QMainWindow):
         # --- Sea widget に注入 ---
         sea = getattr(self, "sea_widget", None)
         if sea is not None:
+            # Phase A (Surface) では HR を sea_widget に渡さない.
+            # → 裏で水中シーンが勝手に進んでしまうのを防ぐ.
+            # HUD には別途数値を表示するので OK.
+            hr_for_sea = hr if t >= 30.0 else None
             sea.set_state(arousal=arousal, valence=valence,
                           engagement=engagement,
-                          hr_bpm=hr, hsi=1.0, signal_fresh=1.0)
+                          hr_bpm=hr_for_sea, hsi=1.0, signal_fresh=1.0)
             # サブビュー切替 (phase 境界で 1 回だけ)
             cur_sub = getattr(sea, "_sub_view", None)
             if cur_sub != target_sub:
