@@ -12,8 +12,28 @@ eq_widgets.py
 
 各ウィジェットは theme.ThemeManager を受け取り、テーマ変更で再描画.
 """
+import os
 import numpy as np
 from PyQt5 import QtCore, QtGui, QtWidgets
+
+
+# assets/instruments/<key>.png を一度だけ読む共有キャッシュ
+_INST_TEX_CACHE = {}
+
+
+def _load_inst_texture(key):
+    if key in _INST_TEX_CACHE:
+        return _INST_TEX_CACHE[key]
+    path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "assets", "instruments", f"{key}.png")
+    img = None
+    if os.path.exists(path):
+        loaded = QtGui.QImage(path)
+        if not loaded.isNull():
+            img = loaded
+    _INST_TEX_CACHE[key] = img
+    return img
 
 try:
     import pyqtgraph as pg
@@ -812,7 +832,11 @@ class InstrumentFader(QtWidgets.QWidget):
         self._ghost_db = None
         self._ghost_show = False
 
-        self.setMinimumSize(78, 220)
+        # Listen と同じテクスチャ画像 (assets/instruments/<key>.png)
+        self._texture = _load_inst_texture(key)
+
+        # ヘッダーに円形ネオンアイコンを置くので最低高さを増やす
+        self.setMinimumSize(86, 260)
         self.setCursor(QtCore.Qt.PointingHandCursor)
         self.setFocusPolicy(QtCore.Qt.ClickFocus)
         self.setToolTip(f"{name} · {self._fmt_freq()} · {blurb}")
@@ -867,7 +891,8 @@ class InstrumentFader(QtWidgets.QWidget):
     def _track_rect(self):
         w = self.width()
         h = self.height()
-        top_reserve = 56
+        # 上部にネオン円 + 名前 + 周波数 で 96px 確保
+        top_reserve = 96
         bottom_reserve = 28
         track_w = 10
         track_x = (w - track_w) // 2
@@ -902,20 +927,65 @@ class InstrumentFader(QtWidgets.QWidget):
         p.setBrush(QtCore.Qt.NoBrush)
         p.drawRoundedRect(0, 0, w - 1, h - 1, 8, 8)
 
-        emo_font = QtGui.QFont("Segoe UI Emoji", 18)
-        p.setFont(emo_font)
-        p.setPen(QtGui.QColor("#e8e8e8"))
-        p.drawText(QtCore.QRectF(0, 4, w, 26), QtCore.Qt.AlignCenter,
-                   self.emoji)
+        # --- 上部: Listen 風ネオン円形アイコン ---
+        # 値で強度 (0..1) を出して、ring の太さ・グロー量に反映
+        intensity = min(1.0, abs(self._db) / max(0.01, self.gain_max))
+        cx = w / 2
+        cy_icon = 32         # 円中心
+        r_icon = 22          # 半径
+        # 外側グロー (4 段)
+        for mult, alpha in [(2.4, 18), (1.7, 38), (1.3, 75), (1.0, 130)]:
+            col = QtGui.QColor(*glow)
+            col.setAlpha(int(alpha * (0.5 + 0.5 * intensity)))
+            grad = QtGui.QRadialGradient(
+                QtCore.QPointF(cx, cy_icon), r_icon * mult)
+            grad.setColorAt(0.0, col)
+            edge = QtGui.QColor(*glow); edge.setAlpha(0)
+            grad.setColorAt(1.0, edge)
+            p.setPen(QtCore.Qt.NoPen)
+            p.setBrush(grad)
+            p.drawEllipse(QtCore.QPointF(cx, cy_icon),
+                          r_icon * mult, r_icon * mult)
+        # 黒い円板 (背景)
+        p.setBrush(QtGui.QColor(6, 6, 10, 230))
+        ring_pen = QtGui.QPen(QtGui.QColor(*glow), 2.5 + 1.5 * intensity)
+        p.setPen(ring_pen)
+        p.drawEllipse(QtCore.QPointF(cx, cy_icon), r_icon, r_icon)
+        # 内部にテクスチャ画像 (あれば)
+        if self._texture is not None:
+            inner_r = r_icon - 4
+            clip = QtGui.QPainterPath()
+            clip.addEllipse(QtCore.QPointF(cx, cy_icon), inner_r, inner_r)
+            p.save()
+            p.setClipPath(clip)
+            tex = self._texture
+            tw, th = tex.width(), tex.height()
+            scale = (inner_r * 2) / max(tw, th)
+            dw, dh = tw * scale, th * scale
+            p.drawImage(QtCore.QRectF(cx - dw / 2, cy_icon - dh / 2,
+                                       dw, dh), tex)
+            p.restore()
+        else:
+            # フォールバック: 絵文字
+            emo_font = QtGui.QFont("Segoe UI Emoji", 16)
+            p.setFont(emo_font)
+            p.setPen(QtGui.QColor("#e8e8e8"))
+            p.drawText(QtCore.QRectF(cx - r_icon, cy_icon - r_icon,
+                                      r_icon * 2, r_icon * 2),
+                       QtCore.Qt.AlignCenter, self.emoji)
+
+        # 名前 (円の下)
         name_font = QtGui.QFont("Segoe UI", 9, QtGui.QFont.Bold)
         p.setFont(name_font)
-        p.setPen(QtGui.QColor("#d0d0d0"))
-        p.drawText(QtCore.QRectF(0, 30, w, 14), QtCore.Qt.AlignCenter, self.name)
+        p.setPen(QtGui.QColor("#d8d8d8"))
+        p.drawText(QtCore.QRectF(0, 62, w, 16),
+                   QtCore.Qt.AlignCenter, self.name)
+        # 周波数
         freq_font = QtGui.QFont("Segoe UI", 7)
         p.setFont(freq_font)
         p.setPen(QtGui.QColor("#7a7a7a"))
-        p.drawText(QtCore.QRectF(0, 43, w, 12), QtCore.Qt.AlignCenter,
-                   self._fmt_freq())
+        p.drawText(QtCore.QRectF(0, 78, w, 12),
+                   QtCore.Qt.AlignCenter, self._fmt_freq())
 
         r = self._track_rect()
         p.setPen(QtCore.Qt.NoPen)

@@ -2020,7 +2020,8 @@ class _RussellPad(QtWidgets.QWidget):
         self._pos = (0.5, 0.5)
         self._trail = []   # list of (v, a)
         self._pulse_phase = 0.0
-        self.setMinimumSize(220, 220)
+        # 軸ラベルの下スペース確保のため、縦方向に少し大きめの最小サイズ
+        self.setMinimumSize(240, 260)
         self._timer = QtCore.QTimer(self)
         self._timer.timeout.connect(self._tick)
         self._timer.start(100)   # 軽量化
@@ -2059,12 +2060,15 @@ class _RussellPad(QtWidgets.QWidget):
             except Exception:
                 pass
 
-        # 描画領域 (正方形)
-        side = min(self.width(), self.height())
-        pad_top = 4
+        # 描画領域 (正方形). 軸ラベル & 角ラベル分の余白を多めに確保.
+        # 縦は下に 24px (Negative/Positive) + 角ラベル分 16px を引いた範囲で正方形.
+        avail_h = self.height() - 26   # 下 26px は軸ラベル用
+        avail_w = self.width()
+        side = min(avail_w, avail_h)
+        pad_top = 18                   # 上 18px は角ラベル飛び出し許容
         x0 = (self.width() - side) / 2
         y0 = pad_top
-        rect = QtCore.QRectF(x0 + 16, y0 + 16, side - 32, side - 32)
+        rect = QtCore.QRectF(x0 + 16, y0, side - 32, side - 32)
 
         # 背景塗り
         qp.setPen(QtCore.Qt.NoPen)
@@ -2100,56 +2104,59 @@ class _RussellPad(QtWidgets.QWidget):
         qp.setBrush(QtCore.Qt.NoBrush)
         qp.drawRoundedRect(rect, 10, 10)
 
-        # 軸ラベル
+        # 軸ラベル (Negative/Positive) — 下に十分な高さを確保 (16px)
         ax_font = QtGui.QFont("Consolas")
         ax_font.setPointSize(8)
         ax_font.setBold(True)
         qp.setFont(ax_font)
         qp.setPen(text_dim)
-        qp.drawText(QtCore.QRectF(rect.left(), rect.bottom() + 2,
-                                  rect.width(), 12),
+        qp.drawText(QtCore.QRectF(rect.left(), rect.bottom() + 4,
+                                  rect.width(), 16),
                     QtCore.Qt.AlignLeft, "← Negative")
-        qp.drawText(QtCore.QRectF(rect.left(), rect.bottom() + 2,
-                                  rect.width(), 12),
+        qp.drawText(QtCore.QRectF(rect.left(), rect.bottom() + 4,
+                                  rect.width(), 16),
                     QtCore.Qt.AlignRight, "Positive →")
         # Y軸ラベル (縦書き風)
         qp.save()
         qp.translate(rect.left() - 6, rect.center().y())
         qp.rotate(-90)
         qp.drawText(QtCore.QRectF(-rect.height() / 2, -10,
-                                  rect.height(), 12),
+                                  rect.height(), 14),
                     QtCore.Qt.AlignCenter, "Arousal  ↑")
         qp.restore()
 
-        # 4 象限ラベル
+        # 4 象限ラベル. 絵文字 ↑ + 名前下 のレイアウト.
+        # widget 端でクリップしないよう、ラベル位置を rect 内側にクランプ.
         for (x, y, emo, name, col_hex) in self.QUAD_LABELS:
             color = QtGui.QColor(col_hex)
             pos = self._xy(x, y, rect)
-            # 半透明ラベル背景
-            label_w, label_h = 76, 32
-            lbl_rect = QtCore.QRectF(pos.x() - label_w / 2,
-                                     pos.y() - label_h / 2,
-                                     label_w, label_h)
+            label_w, label_h = 88, 36   # 文字切れ防止に拡張
+            half_w, half_h = label_w / 2, label_h / 2
+            # rect の内側に収める (はみ出すと外で切れる)
+            lx = max(rect.left() + 2, min(rect.right() - label_w - 2,
+                                          pos.x() - half_w))
+            ly = max(rect.top() + 2, min(rect.bottom() - label_h - 2,
+                                         pos.y() - half_h))
+            lbl_rect = QtCore.QRectF(lx, ly, label_w, label_h)
             qp.setPen(QtCore.Qt.NoPen)
-            qp.setBrush(QtGui.QColor(0, 0, 0, 110))
-            qp.drawRoundedRect(lbl_rect, 6, 6)
-            # 絵文字
-            emo_font = QtGui.QFont()
-            emo_font.setPointSize(14)
+            qp.setBrush(QtGui.QColor(0, 0, 0, 140))
+            qp.drawRoundedRect(lbl_rect, 7, 7)
+            # 絵文字 (上半分)
+            emo_font = QtGui.QFont("Segoe UI Emoji", 13)
             qp.setFont(emo_font)
             qp.setPen(color)
             qp.drawText(
-                QtCore.QRectF(lbl_rect.left(), lbl_rect.top() - 2,
+                QtCore.QRectF(lbl_rect.left(), lbl_rect.top() + 1,
                               lbl_rect.width(), 18),
                 QtCore.Qt.AlignCenter, emo)
-            # 名前
+            # 名前 (下半分)
             nm_font = QtGui.QFont()
             nm_font.setPointSize(7)
             nm_font.setBold(True)
             qp.setFont(nm_font)
             qp.drawText(
-                QtCore.QRectF(lbl_rect.left(), lbl_rect.top() + 16,
-                              lbl_rect.width(), 14),
+                QtCore.QRectF(lbl_rect.left() + 2, lbl_rect.top() + 19,
+                              lbl_rect.width() - 4, 16),
                 QtCore.Qt.AlignCenter, name.upper())
 
         # 軌跡 (古い→新しい順、新しいほど濃く)
@@ -2365,7 +2372,7 @@ class _BandSphere(QtWidgets.QWidget):
         self._value = 0.0
         self._raw = 0.0
         self._phase = 0.0
-        self.setMinimumSize(110, 130)
+        self.setMinimumSize(110, 150)   # ラベル切れ防止のため +20
         self._timer = QtCore.QTimer(self)
         self._timer.timeout.connect(self._tick)
         self._timer.start(100)   # 軽量化: 60→100ms
@@ -2391,9 +2398,10 @@ class _BandSphere(QtWidgets.QWidget):
         w = self.width()
         h = self.height()
         cx = w / 2
-        cy = h * 0.44
-        # 半径
-        radius = min(w * 0.42, h * 0.36)
+        # リング中心を少し上にして下にラベルスペースを確保
+        cy = h * 0.40
+        # 半径 (下にラベル領域 32px を残す)
+        radius = min(w * 0.42, (h - 36) * 0.45)
         breathe = 1.0 + 0.05 * _m.sin(self._phase)
         radius *= breathe
 
@@ -2468,19 +2476,25 @@ class _BandSphere(QtWidgets.QWidget):
         qp.drawText(QtCore.QRectF(cx - radius, cy - 10, radius * 2, 20),
                     QtCore.Qt.AlignCenter, f"{self._raw:.2f}")
 
-        # ラベル
+        # ラベル (下: ギリシャ文字が切れないように余白多め)
         lbl_font = QtGui.QFont()
         lbl_font.setPointSize(15)
         lbl_font.setBold(True)
         qp.setFont(lbl_font)
         qp.setPen(col)
-        qp.drawText(QtCore.QRectF(0, h - 22, w, 20),
+        # 28px の高さで描画し、4px の下余白を残す
+        qp.drawText(QtCore.QRectF(0, h - 32, w, 28),
                     QtCore.Qt.AlignCenter, self.label)
         qp.end()
 
 
 class _InstrumentCircle(QtWidgets.QWidget):
-    """楽器ごとの円形 EQ 表示. ネオンリング + 絵文字 + dB 値."""
+    """楽器ごとの円形 EQ 表示. ネオンリング + 絵文字 + dB 値.
+
+    上半分クリック → EQ +0.5dB / 下半分クリック → -0.5dB.
+    bump シグナル経由で MainWindow に通知.
+    """
+    bump = QtCore.pyqtSignal(str, float)   # key, delta_db
 
     def __init__(self, key, emoji, name, parent=None):
         super().__init__(parent)
@@ -2493,6 +2507,11 @@ class _InstrumentCircle(QtWidgets.QWidget):
         self._text_dim = QtGui.QColor("#8a8a8a")
         self._phase = 0.0
         self.setMinimumSize(150, 200)
+        self.setCursor(QtCore.Qt.PointingHandCursor)
+        self.setToolTip(
+            f"{name} — クリック上半分 ↑ +0.5dB / 下半分 ↓ -0.5dB")
+        self._hover_half = None   # "up" / "down" / None
+        self.setMouseTracking(True)
         # 楽器テクスチャ画像 (assets/instruments/{key}.png)
         self._texture = None
         tex_path = os.path.join(
@@ -2622,7 +2641,47 @@ class _InstrumentCircle(QtWidgets.QWidget):
         qp.setPen(self._text_dim)
         qp.drawText(QtCore.QRectF(0, h - 20, w, 14),
                     QtCore.Qt.AlignCenter, self.name)
+
+        # ホバー時: 上下半分にうっすら ↑/↓ ヒント
+        if self._hover_half is not None:
+            arrow_font = QtGui.QFont("Segoe UI", 22, QtGui.QFont.Bold)
+            qp.setFont(arrow_font)
+            qp.setPen(QtGui.QColor(self._accent.red(),
+                                   self._accent.green(),
+                                   self._accent.blue(), 160))
+            if self._hover_half == "up":
+                qp.drawText(QtCore.QRectF(0, 4, w, 22),
+                            QtCore.Qt.AlignCenter, "▲")
+            else:
+                qp.drawText(QtCore.QRectF(0, h - 64, w, 22),
+                            QtCore.Qt.AlignCenter, "▼")
         qp.end()
+
+    # ---- マウス操作: 上半分↑ / 下半分↓ で EQ ±0.5dB ----
+    def mousePressEvent(self, ev):
+        if ev.button() != QtCore.Qt.LeftButton:
+            return
+        half = "up" if ev.pos().y() < self.height() / 2 else "down"
+        delta = 0.5 if half == "up" else -0.5
+        # 限界クランプ
+        new_db = max(-self._gain_max,
+                     min(self._gain_max, self._value_db + delta))
+        delta_actual = new_db - self._value_db
+        if abs(delta_actual) > 1e-3:
+            self._value_db = new_db
+            self.update()
+            self.bump.emit(self.key, delta_actual)
+
+    def mouseMoveEvent(self, ev):
+        half = "up" if ev.pos().y() < self.height() / 2 else "down"
+        if half != self._hover_half:
+            self._hover_half = half
+            self.update()
+
+    def leaveEvent(self, ev):
+        if self._hover_half is not None:
+            self._hover_half = None
+            self.update()
 
 
 class _RibbonBar(QtWidgets.QWidget):
@@ -2955,6 +3014,30 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         self._watch_photo_btn.setToolTip("Save current Watch view (PNG)")
         self._watch_photo_btn.clicked.connect(self._watch_save_photo)
+        # Demo モードボタン (Photo の左隣) — 模擬的に状態をループ
+        self._watch_demo_btn = QtWidgets.QPushButton("▶ Demo",
+                                                      self.watch_page)
+        self._watch_demo_btn.setCursor(QtCore.Qt.PointingHandCursor)
+        self._watch_demo_btn.setCheckable(True)
+        self._watch_demo_btn.setFixedSize(76, 36)
+        self._watch_demo_btn.setStyleSheet(
+            "QPushButton { background-color: rgba(0,0,0,140); "
+            "color: #ffffff; border: 1.5px solid rgba(255,255,255,80); "
+            "border-radius: 18px; font-size: 12px; font-weight: bold; }"
+            f"QPushButton:hover {{ border-color: {self.theme.accent}; "
+            "background-color: rgba(0,0,0,200); }}"
+            f"QPushButton:checked {{ background-color: {self.theme.accent}; "
+            "color: #ffffff; border-color: #ffffff; }}"
+        )
+        self._watch_demo_btn.setToolTip(
+            "Demo mode — simulate EEG/HR changes so reviewers "
+            "without a headset can see the scenes morph")
+        self._watch_demo_btn.clicked.connect(self._watch_toggle_demo)
+        # Demo state
+        self._watch_demo_active = False
+        self._watch_demo_t0 = 0.0
+        self._watch_demo_timer = QtCore.QTimer(self)
+        self._watch_demo_timer.timeout.connect(self._watch_demo_tick)
         # マウス追従パーティクル (HUD の上)
         self._watch_cursor_particles = _CursorParticles(self.watch_page)
         self._watch_cursor_particles.set_accent(self.theme.accent)
@@ -3790,12 +3873,16 @@ class MainWindow(QtWidgets.QMainWindow):
         colors_ppg = ["#ff6b6b", "#ffa07a", "#4ecdc4", "#45b7d1"]
         for i in range(4):
             p = gl.addPlot(row=i, col=0)
+            # ラベル text を短く. pyqtgraph の自動 scale suffix "(x0.00)" が
+            # 縦軸でクリップするのを避けるため、単に "ch1".."ch4" のみに.
             p.setLabel("left", f"ch{i+1}", **{"color": colors_ppg[i],
-                                              "font-size": "10pt"})
+                                              "font-size": "9pt"})
             p.showGrid(x=False, y=True, alpha=0.15)
             p.setMouseEnabled(x=False, y=False)
             p.hideButtons()
-            p.getAxis("left").setWidth(40)
+            # 軸の自動スケール suffix "(x10⁻³)" は短くて済むよう disable
+            p.getAxis("left").enableAutoSIPrefix(False)
+            p.getAxis("left").setWidth(36)
             if i < 3:
                 p.hideAxis("bottom")
             else:
@@ -3863,9 +3950,13 @@ class MainWindow(QtWidgets.QMainWindow):
 
         emo = QtWidgets.QLabel("—")
         emo.setAlignment(QtCore.Qt.AlignCenter)
+        # 絵文字 + 半角スペース x 2 + 名前 (emoji と text の被りを防ぐ)
         emo.setStyleSheet(
+            "font-family: 'Segoe UI Emoji', 'Segoe UI', sans-serif; "
             "font-size: 18px; font-weight: bold; color: #e8e8e8; "
-            "padding: 6px; background-color: #18181a; border-radius: 6px;")
+            "padding: 8px 14px; background-color: #18181a; "
+            "border-radius: 6px; letter-spacing: 1px;")
+        emo.setMinimumHeight(40)
         rv.addWidget(emo)
 
         tips = QtWidgets.QLabel(
@@ -3910,21 +4001,16 @@ class MainWindow(QtWidgets.QMainWindow):
         # --- row1: View タブ + Auto / Manual + Reset ---
         top = QtWidgets.QHBoxLayout()
         top.setSpacing(6)
-        # View タブ (Mixer / Sea)
+        # View タブ: Mixer のみ (Sea は Watch モードに統合済み)
         self.eq_view_mixer_btn = QtWidgets.QPushButton("🎚 Mixer")
-        self.eq_view_sea_btn = QtWidgets.QPushButton("🌊 Sea")
-        for b in (self.eq_view_mixer_btn, self.eq_view_sea_btn):
-            b.setCheckable(True)
-            b.setCursor(QtCore.Qt.PointingHandCursor)
-            b.setFixedHeight(28)
+        self.eq_view_mixer_btn.setCheckable(True)
         self.eq_view_mixer_btn.setChecked(True)
+        self.eq_view_mixer_btn.setCursor(QtCore.Qt.PointingHandCursor)
+        self.eq_view_mixer_btn.setFixedHeight(28)
         self.eq_view_mixer_btn.clicked.connect(lambda: self._set_eq_view("mixer"))
-        self.eq_view_sea_btn.clicked.connect(lambda: self._set_eq_view("sea"))
-        if not HAS_SEA:
-            self.eq_view_sea_btn.setEnabled(False)
-            self.eq_view_sea_btn.setToolTip("SeaWidget 未利用: " + _SEA_IMPORT_ERR)
         top.addWidget(self.eq_view_mixer_btn)
-        top.addWidget(self.eq_view_sea_btn)
+        # 旧 Sea ボタン参照を null に (古いコードからの参照を防ぐ)
+        self.eq_view_sea_btn = None
         # セパレータ
         sep = QtWidgets.QFrame()
         sep.setFrameShape(QtWidgets.QFrame.VLine)
@@ -4059,6 +4145,24 @@ class MainWindow(QtWidgets.QMainWindow):
         self.audio.set_band(key, db)
         self._eq_update_explain()
 
+    def _on_listen_circle_bump(self, key, delta_db):
+        """Listen の楽器サークルを上下クリックで EQ ±0.5dB.
+        Auto モード時は Manual に戻してから適用.
+        """
+        if self._eq_mode == "auto":
+            self._set_eq_mode("manual")
+        cur = self.audio.get_bands().get(key, 0.0)
+        new_db = max(-GAIN_MAX_DB, min(GAIN_MAX_DB, cur + float(delta_db)))
+        self.audio.set_band(key, new_db)
+        # フェーダ UI も同期
+        if hasattr(self, "eq_bank") and key in self.eq_bank.faders:
+            self.eq_bank.faders[key].set_value(new_db, emit=False)
+        self._eq_update_explain()
+        # Toast で結果フィードバック
+        if hasattr(self, "_show_toast"):
+            arrow = "▲" if delta_db > 0 else "▼"
+            self._show_toast(f"{arrow}  {key.upper()}  {new_db:+.1f} dB")
+
     def _on_reverb_changed(self, pct):
         if self._eq_mode != "manual":
             # Auto 中はコントローラが支配
@@ -4139,29 +4243,18 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # ---- View (Mixer / Sea) 切替 ----
     def _update_eq_view_btn_style(self):
-        def style(active, accent):
-            if active:
-                return (f"QPushButton {{ background-color: {accent}; "
-                        f"color: #ffffff; border: 1px solid {accent}; "
-                        f"border-radius: 14px; padding: 3px 14px; "
-                        f"font-size: 12px; font-weight: bold; }}")
-            return ("QPushButton { background-color: #2b2b2b; color: #9a9a9a; "
-                    "border: 1px solid #3a3a3a; border-radius: 14px; "
-                    "padding: 3px 14px; font-size: 12px; }"
-                    "QPushButton:hover { background-color: #3a3a3a; color: #e0e0e0; }")
+        accent = self.theme.accent
         self.eq_view_mixer_btn.setStyleSheet(
-            style(self.eq_view_mixer_btn.isChecked(), self.theme.accent))
-        self.eq_view_sea_btn.setStyleSheet(
-            style(self.eq_view_sea_btn.isChecked(), self.theme.accent))
+            f"QPushButton {{ background-color: {accent}; "
+            f"color: #ffffff; border: 1px solid {accent}; "
+            f"border-radius: 14px; padding: 3px 14px; "
+            f"font-size: 12px; font-weight: bold; }}")
 
     def _set_eq_view(self, view):
-        if view == "sea" and not HAS_SEA:
-            # フォールバック: Mixer
-            view = "mixer"
-        self._eq_view = view
-        self.eq_view_mixer_btn.setChecked(view == "mixer")
-        self.eq_view_sea_btn.setChecked(view == "sea")
-        self.eq_stack.setCurrentIndex(1 if view == "sea" else 0)
+        # Sea ビューは Watch モードに統合済み. Mixer のみ.
+        self._eq_view = "mixer"
+        self.eq_view_mixer_btn.setChecked(True)
+        self.eq_stack.setCurrentIndex(0)
         self._update_eq_view_btn_style()
 
     # ---- Sea ビュー駆動 (Mixer / Sea どちらでも毎フレーム呼ぶ) ----
@@ -4579,6 +4672,78 @@ class MainWindow(QtWidgets.QMainWindow):
             self.showFullScreen()
             self._show_toast("⛶ Fullscreen (F11)")
 
+    # ============ Demo mode (review without a headset) ============
+    def _watch_toggle_demo(self):
+        """ON/OFF を切り替えるトグル. ON 中は EEG/HR を模擬値で動かす."""
+        if not self._watch_demo_active:
+            self._watch_demo_active = True
+            self._watch_demo_t0 = time.monotonic()
+            self._watch_demo_btn.setChecked(True)
+            self._watch_demo_btn.setText("■ Demo")
+            self._watch_demo_timer.start(80)   # 12.5 Hz
+            self._show_toast(
+                "▶  Demo mode ON — EEG/HR を模擬値で循環します")
+        else:
+            self._watch_demo_active = False
+            self._watch_demo_btn.setChecked(False)
+            self._watch_demo_btn.setText("▶ Demo")
+            self._watch_demo_timer.stop()
+            self._show_toast("■  Demo mode OFF")
+
+    def _watch_demo_tick(self):
+        """40 秒で 1 サイクル: calm → focus → excited → stressed → calm.
+        各 phase で arousal / valence / engagement / HR を入れ替える.
+        SeaWidget と Mandala に直接注入. State.* には触らない (録画汚染防止).
+        """
+        if not self._watch_demo_active:
+            return
+        import math as _m
+        t = (time.monotonic() - self._watch_demo_t0) % 40.0
+        # 5 phase × 8 秒
+        phases = [
+            # (label,           arousal, valence, engage, hr, sub_view)
+            ("CALM",            0.25, 0.65, 0.40, 62, "underwater"),
+            ("FOCUS",           0.45, 0.55, 0.80, 68, "surface"),
+            ("EXCITED",         0.80, 0.85, 0.75, 92, "surface"),
+            ("STRESSED",        0.85, 0.20, 0.65, 105, "underwater"),
+            ("CHILL",           0.30, 0.70, 0.45, 70, "surface"),
+        ]
+        idx = int(t // 8) % len(phases)
+        nxt = (idx + 1) % len(phases)
+        # smooth tween 内 phase 進捗 (0..1)
+        u = (t - idx * 8) / 8.0
+        # 0→0 で滑らかに ease in-out
+        s = 0.5 - 0.5 * _m.cos(_m.pi * u)
+        a0, v0, e0, h0, sub0 = phases[idx][1:]
+        a1, v1, e1, h1, sub1 = phases[nxt][1:]
+        a = a0 + (a1 - a0) * s
+        v = v0 + (v1 - v0) * s
+        e = e0 + (e1 - e0) * s
+        h = h0 + (h1 - h0) * s
+        # Sea widget に注入
+        sea = getattr(self, "sea_widget", None)
+        if sea is not None:
+            sea.set_state(arousal=a, valence=v, engagement=e,
+                          hr_bpm=h, hsi=1.0, signal_fresh=1.0)
+            # phase 切替点でサブビュー変更
+            if u < 0.05 and getattr(sea, "_sub_view", None) != sub0:
+                sea.set_sub_view(sub0)
+                if sub0 in getattr(sea, "_sub_btns", {}):
+                    for k, b in sea._sub_btns.items():
+                        b.setChecked(k == sub0)
+                    if hasattr(sea, "_restyle_sub_btns"):
+                        sea._restyle_sub_btns()
+                if hasattr(self, "_watch_mandala"):
+                    self._watch_mandala.set_show_band_arc(
+                        sub0 == "surface")
+        # HUD も模擬データで書く
+        rus_fake = {"arousal": a, "valence": v}
+        if hasattr(self, "_update_watch_hud"):
+            self._update_watch_hud(
+                rus_fake, e, h, self.audio.get_bands(),
+                quality=[1, 1, 1, 1],
+                recording=getattr(self, "recording", False))
+
     def _watch_save_photo(self):
         """Watch ビューだけを PNG 保存 (HUD 含む現在描画)."""
         from pathlib import Path
@@ -4882,6 +5047,15 @@ class MainWindow(QtWidgets.QMainWindow):
                         - self._watch_photo_btn.width() - pad,
                         pad + 50)   # 上部 status bar 下に
                     self._watch_photo_btn.raise_()
+                if hasattr(self, "_watch_demo_btn"):
+                    pad = 14
+                    # Photo の左隣
+                    self._watch_demo_btn.move(
+                        self.watch_page.width()
+                        - self._watch_photo_btn.width()
+                        - self._watch_demo_btn.width() - pad - 6,
+                        pad + 50)
+                    self._watch_demo_btn.raise_()
         return super().eventFilter(obj, event)
 
     # ---- Watch mode の HUD ----
@@ -4991,6 +5165,33 @@ class MainWindow(QtWidgets.QMainWindow):
             self._listen_band_bars[band] = wave
         outer.addLayout(bp_row)
 
+        # ============ Heart Rate (PPG ch1 + BPM 大表示) ============
+        outer.addWidget(_section_title("HEART RATE"))
+        hr_row = QtWidgets.QHBoxLayout()
+        hr_row.setSpacing(14)
+        # BPM 大表示
+        self._listen_hr_label = QtWidgets.QLabel("♥  ---")
+        self._listen_hr_label.setStyleSheet(
+            "font-family: 'Consolas'; font-size: 32px; font-weight: bold; "
+            "color: #ff6b6b; padding-right: 12px;")
+        self._listen_hr_label.setFixedWidth(170)
+        hr_row.addWidget(self._listen_hr_label,
+                          alignment=QtCore.Qt.AlignVCenter)
+        # PPG ch1 のミニ波形プロット
+        self._listen_hr_plot = pg.PlotWidget()
+        self._listen_hr_plot.setBackground("#0d0d10")
+        self._listen_hr_plot.showGrid(x=False, y=True, alpha=0.12)
+        self._listen_hr_plot.setMouseEnabled(x=False, y=False)
+        self._listen_hr_plot.hideButtons()
+        self._listen_hr_plot.hideAxis("bottom")
+        self._listen_hr_plot.hideAxis("left")
+        self._listen_hr_plot.setFixedHeight(70)
+        self._listen_hr_curve = self._listen_hr_plot.plot(
+            np.zeros(PPG_BUF_LEN),
+            pen=pg.mkPen(color="#ff6b6b", width=1.8))
+        hr_row.addWidget(self._listen_hr_plot, 1)
+        outer.addLayout(hr_row)
+
         # ============ Large Adaptive EQ (2x3 グリッド) ============
         outer.addWidget(_section_title("LARGE ADAPTIVE EQ"))
         grid_w = QtWidgets.QWidget()
@@ -5001,6 +5202,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._listen_circles = {}
         for i, (k, emo, name, freq, kind, q, blurb) in enumerate(BANDS):
             circle = _InstrumentCircle(k, emo, name)
+            circle.bump.connect(self._on_listen_circle_bump)
             circle.set_accent(self.theme.accent)
             r, c = divmod(i, 3)
             grid.addWidget(circle, r, c)
@@ -5344,7 +5546,7 @@ class MainWindow(QtWidgets.QMainWindow):
         return "◌", "Neutral", "#cccccc"
 
     def _update_listen_ui(self, rus, eng, eq_vals, reverb_wet,
-                          bands=None):
+                          bands=None, hr_bpm=None, ppg_ch=None):
         a = rus.get("arousal", 0.5)
         v = rus.get("valence", 0.5)
         emoji, name, color = self._emotion_label(a, v)
@@ -5369,6 +5571,19 @@ class MainWindow(QtWidgets.QMainWindow):
                 avg = float(np.mean(valid)) if valid else 0.0
                 norm = max(0.0, min(1.0, (avg + 1.0) / 3.5))
                 bar.set_value(norm)
+        # 心拍: BPM 大表示 + ミニ波形
+        if hasattr(self, "_listen_hr_label"):
+            if hr_bpm and hr_bpm > 20:
+                self._listen_hr_label.setText(f"♥ {int(hr_bpm):3d}")
+            else:
+                self._listen_hr_label.setText("♥  ---")
+        if hasattr(self, "_listen_hr_curve") and ppg_ch is not None:
+            d = ppg_ch
+            if d.size > 0 and d.std() > 0 and np.all(np.isfinite(d)):
+                d_show = d - d.mean()
+            else:
+                d_show = d
+            self._listen_hr_curve.setData(d_show)
 
     def _update_watch_hud(self, rus, eng, hr, eq_vals,
                           quality=None, recording=False):
@@ -5731,9 +5946,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Listen モード UI 更新
         if getattr(self, "_mode", "studio") == "listen":
+            # PPG ch1 を Listen のミニ波形に渡す
+            ppg_ch1 = ppg_data[0] if ppg_data and len(ppg_data) > 0 else None
             self._update_listen_ui(rus, eng, self.audio.get_bands(),
                                    self.audio.get_reverb_wet(),
-                                   bands=bands)
+                                   bands=bands,
+                                   hr_bpm=hr_osc, ppg_ch=ppg_ch1)
 
         # Watch モード HUD 更新
         if getattr(self, "_mode", "studio") == "watch":
