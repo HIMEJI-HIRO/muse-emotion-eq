@@ -186,6 +186,38 @@ class _VideoSource:
             self._cur_video_time = 0.0
         self._last_grab = now
 
+    def seek_to(self, t_sec):
+        """指定秒数のフレームにジャンプ + 1 フレーム読み込み.
+        起動時に空フレーム回避用に呼ぶ."""
+        if not self.available or self._cap is None:
+            return
+        if self._duration <= 0:
+            return
+        t = max(0.0, min(self._duration - 0.1, float(t_sec)))
+        target_frame = int(t * self._fps)
+        try:
+            with _suppress_stderr():
+                self._cap.set(cv2.CAP_PROP_POS_FRAMES, target_frame)
+                ok, frame = self._cap.read()
+            if ok:
+                self._set_image(frame)
+                # seam image は frame 0 を取りたいので、別途 frame 0 を読む
+                if self._seam_image is None:
+                    self._cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    ok2, frame0 = self._cap.read()
+                    if ok2:
+                        # 一旦 frame 0 を seam に保存し、すぐ target に戻す
+                        self._set_image(frame0)
+                        self._seam_image = QImage(self._cur_image)
+                    # target_frame に戻す
+                    self._cap.set(cv2.CAP_PROP_POS_FRAMES, target_frame)
+                    ok3, frame_again = self._cap.read()
+                    if ok3:
+                        self._set_image(frame_again)
+                self._cur_video_time = t + self._frame_interval
+        except Exception:
+            pass
+
     # --- ループ継ぎ目隠し用 API ----------------------------------------
     def seam_image(self):
         """先頭フレーム (loop 開始点) の QImage."""
@@ -406,11 +438,21 @@ class SeaWidget(QWidget):
         # underwater = ♥ HR (心拍) で動く
         self._sub_view = "surface"
         self._uw_sources = {}
+        # 動画ごとに「最初に subject (魚/ジンベエ) が映る目安の秒数」を指定.
+        # この値ぶん seek してから再生開始する → 起動直後やシーン切替時に
+        # 「何もない空っぽの水中」を見せない.
+        uw_warmup = {
+            "low": 1.5,    # サンゴ礁: 1.5秒目で構図完成
+            "mid": 2.0,    # 魚群:    2秒目で密度ピーク
+            "high": 3.0,   # ジンベエ: 3秒目でジンベエが画面中央寄りに
+        }
         for name, path in [("low", VIDEO_UNDERWATER_LOW),
                              ("mid", VIDEO_UNDERWATER_MID),
                              ("high", VIDEO_UNDERWATER_HIGH)]:
             src = _VideoSource(path)
             if src.available:
+                # 中盤フレームへシーク (空フレーム回避)
+                src.seek_to(uw_warmup.get(name, 2.0))
                 self._uw_sources[name] = src
         self._uw_available = bool(self._uw_sources)
         self._uw_current = "low"
@@ -677,14 +719,14 @@ class SeaWidget(QWidget):
 
         # 動画フレーム更新
         if self._sub_view == "underwater" and self._uw_available:
-            # 水中: 現在シーン + 遷移先シーンを両方デコード (crossfade)
+            # 水中: ★ 全 3 本を常時デコード ★
+            # 目的: シーン切替時に「frame 0 から開始 → 何もない水中」を避ける.
+            # 切替先の動画も裏で進めているので、ジンベエが既に画面中央を
+            # 泳いでいる瞬間にクロスフェード in できる.
             rate = 0.7 + self._c["arousal"] * 0.4   # 覚醒で少し速く
-            active = {self._uw_current, self._uw_target}
-            for n in active:
-                src = self._uw_sources.get(n)
-                if src is not None:
-                    src.set_rate(rate)
-                    src.update(now)
+            for src in self._uw_sources.values():
+                src.set_rate(rate)
+                src.update(now)
         elif self._use_morph and self._morph_source is not None:
             # シンプル前進ループ. Arousal で再生速度のみ変える.
             # 動画自体に morph が入っているので emotion 連動を捨てても見栄え◯
