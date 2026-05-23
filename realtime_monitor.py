@@ -986,28 +986,28 @@ class _DemoExplainOverlay(QtWidgets.QFrame):
         self.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents, True)
 
         v = QtWidgets.QVBoxLayout(self)
-        v.setContentsMargins(18, 16, 18, 16)
-        v.setSpacing(8)
+        v.setContentsMargins(22, 22, 22, 22)
+        v.setSpacing(12)
 
-        # ----- ヘッダ -----
+        # ----- ヘッダ (大きめ) -----
         hdr = QtWidgets.QHBoxLayout()
         hdr.setSpacing(8)
         self._title_lbl = QtWidgets.QLabel("▶  DEMO  MODE")
         self._title_lbl.setStyleSheet(
-            "font-size: 13px; font-weight: bold; color: #ffffff; "
-            "letter-spacing: 2px;")
+            "font-size: 16px; font-weight: bold; color: #ffffff; "
+            "letter-spacing: 3px;")
         hdr.addWidget(self._title_lbl)
         hdr.addStretch()
         self._time_lbl = QtWidgets.QLabel("⏱ 0.0 / 60s")
         self._time_lbl.setStyleSheet(
-            "font-family: 'Consolas'; font-size: 11px; color: #b0b0b0;")
+            "font-family: 'Consolas'; font-size: 13px; color: #b0b0b0;")
         hdr.addWidget(self._time_lbl)
         v.addLayout(hdr)
 
-        # ----- Phase ピル -----
+        # ----- Phase ピル (高さ大きく) -----
         self._phase_pill = QtWidgets.QLabel("PHASE · CALM")
         self._phase_pill.setAlignment(QtCore.Qt.AlignCenter)
-        self._phase_pill.setFixedHeight(26)
+        self._phase_pill.setFixedHeight(38)
         self._update_phase_pill_style("surface")
         v.addWidget(self._phase_pill)
 
@@ -1016,17 +1016,18 @@ class _DemoExplainOverlay(QtWidgets.QFrame):
         self._prog.setRange(0, 1000)
         self._prog.setValue(0)
         self._prog.setTextVisible(False)
-        self._prog.setFixedHeight(6)
+        self._prog.setFixedHeight(8)
         self._prog.setStyleSheet(self._progress_style("#9b59b6"))
         v.addWidget(self._prog)
 
-        v.addSpacing(4)
+        v.addStretch(1)   # ↓ EEG セクションまでに余白
         v.addWidget(self._make_divider())
 
         # ----- EEG section -----
         self._eeg_title = QtWidgets.QLabel("🧠  EEG  →  Surface")
         self._eeg_title.setStyleSheet(
-            f"font-size: 12px; font-weight: bold; color: {self.EEG_ACCENT};")
+            f"font-size: 14px; font-weight: bold; "
+            f"color: {self.EEG_ACCENT}; padding: 4px 0;")
         v.addWidget(self._eeg_title)
 
         self._aro_row, self._aro_bar, self._aro_val = \
@@ -1039,13 +1040,14 @@ class _DemoExplainOverlay(QtWidgets.QFrame):
         v.addLayout(self._val_row)
         v.addLayout(self._eng_row)
 
-        v.addSpacing(4)
+        v.addStretch(1)
         v.addWidget(self._make_divider())
 
         # ----- HR section -----
         self._hr_title = QtWidgets.QLabel("♥  HEART RATE  →  Underwater")
         self._hr_title.setStyleSheet(
-            f"font-size: 12px; font-weight: bold; color: {self.HR_ACCENT};")
+            f"font-size: 14px; font-weight: bold; "
+            f"color: {self.HR_ACCENT}; padding: 4px 0;")
         v.addWidget(self._hr_title)
 
         self._bpm_row, self._bpm_bar, self._bpm_val = \
@@ -1054,32 +1056,64 @@ class _DemoExplainOverlay(QtWidgets.QFrame):
 
         zone_row = QtWidgets.QHBoxLayout()
         zlbl = QtWidgets.QLabel("Zone")
-        zlbl.setStyleSheet("font-size: 11px; color: #c0c0c0;")
-        zlbl.setFixedWidth(96)
+        zlbl.setStyleSheet("font-size: 13px; color: #c0c0c0;")
+        zlbl.setFixedWidth(110)
         zone_row.addWidget(zlbl)
         self._zone_lbl = QtWidgets.QLabel("LOW")
         self._zone_lbl.setStyleSheet(
-            "font-family: 'Consolas'; font-size: 12px; "
+            "font-family: 'Consolas'; font-size: 15px; "
             "font-weight: bold; color: #5fc7ff;")
         zone_row.addWidget(self._zone_lbl)
         zone_row.addStretch()
         v.addLayout(zone_row)
 
-        v.addSpacing(4)
+        v.addStretch(1)
         v.addWidget(self._make_divider())
 
-        # ----- 解説 -----
+        # ----- 解説 (下半分を占める) -----
         wh_title = QtWidgets.QLabel("▼  WHAT'S HAPPENING")
         wh_title.setStyleSheet(
-            "font-size: 11px; font-weight: bold; color: #bdbdbd; "
-            "letter-spacing: 1px;")
+            "font-size: 12px; font-weight: bold; color: #bdbdbd; "
+            "letter-spacing: 2px; padding: 4px 0;")
         v.addWidget(wh_title)
         self._expl_lbl = QtWidgets.QLabel("")
         self._expl_lbl.setWordWrap(True)
         self._expl_lbl.setAlignment(QtCore.Qt.AlignTop | QtCore.Qt.AlignLeft)
         self._expl_lbl.setStyleSheet(
-            "font-size: 12px; color: #e0e0e0; line-height: 1.5;")
-        v.addWidget(self._expl_lbl, 1)
+            "font-size: 13px; color: #e8e8e8; line-height: 1.6; "
+            "padding: 4px 2px;")
+        v.addWidget(self._expl_lbl, 2)   # stretch 2: 下半分を埋める
+
+        # ----- フッタ: タイムライン (5 phase を 5 ブロックで可視化) -----
+        v.addWidget(self._make_divider())
+        tl_title = QtWidgets.QLabel("⌁  TIMELINE  (60s loop)")
+        tl_title.setStyleSheet(
+            "font-size: 11px; color: #909090; "
+            "letter-spacing: 1px; padding: 2px 0;")
+        v.addWidget(tl_title)
+        # 5 つの phase インジケータ (現在 phase をハイライト)
+        self._timeline_row = QtWidgets.QHBoxLayout()
+        self._timeline_row.setSpacing(4)
+        self._timeline_segments = []
+        seg_defs = [
+            ("CALM", self.EEG_ACCENT),
+            ("RISING", self.EEG_ACCENT),
+            ("INTENSE", self.EEG_ACCENT),
+            ("STORMY", self.EEG_ACCENT),
+            ("HR-arc", self.HR_ACCENT),
+        ]
+        for label, color in seg_defs:
+            seg = QtWidgets.QLabel(label)
+            seg.setAlignment(QtCore.Qt.AlignCenter)
+            seg.setFixedHeight(22)
+            seg.setStyleSheet(
+                "QLabel { background-color: rgba(255,255,255,18); "
+                "color: #a0a0a0; border-radius: 4px; "
+                "font-size: 9px; font-weight: bold; "
+                "letter-spacing: 1px; padding: 2px 4px; }")
+            self._timeline_row.addWidget(seg, 1)
+            self._timeline_segments.append((seg, label, color))
+        v.addLayout(self._timeline_row)
 
     # ------------------------------------------------------------------
     def _make_divider(self):
@@ -1092,27 +1126,27 @@ class _DemoExplainOverlay(QtWidgets.QFrame):
     def _make_meter_row(self, label_text, color_hex, value_text="0.00"):
         """ラベル + 横バー + 数値. 3 wedge レイアウトで重ならない."""
         row = QtWidgets.QHBoxLayout()
-        row.setSpacing(8)
-        # ラベル (固定幅)
+        row.setSpacing(10)
+        # ラベル (固定幅、大きめ)
         lbl = QtWidgets.QLabel(label_text)
-        lbl.setStyleSheet("font-size: 11px; color: #c8c8c8;")
-        lbl.setFixedWidth(96)
+        lbl.setStyleSheet("font-size: 13px; color: #d2d2d2;")
+        lbl.setFixedWidth(110)
         row.addWidget(lbl)
-        # バー (伸縮)
+        # バー (伸縮、太め)
         bar = QtWidgets.QProgressBar()
         bar.setRange(0, 1000)
         bar.setValue(0)
         bar.setTextVisible(False)
-        bar.setFixedHeight(10)
+        bar.setFixedHeight(14)
         bar.setStyleSheet(self._progress_style(color_hex))
         row.addWidget(bar, 1)
         # 値テキスト (固定幅、右揃え)
         val = QtWidgets.QLabel(value_text)
         val.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
         val.setStyleSheet(
-            "font-family: 'Consolas'; font-size: 11px; "
-            "font-weight: bold; color: #f0f0f0;")
-        val.setFixedWidth(46)
+            "font-family: 'Consolas'; font-size: 13px; "
+            "font-weight: bold; color: #f5f5f5;")
+        val.setFixedWidth(52)
         row.addWidget(val)
         return row, bar, val
 
@@ -1132,9 +1166,33 @@ class _DemoExplainOverlay(QtWidgets.QFrame):
         accent = self.EEG_ACCENT if sub_view == "surface" else self.HR_ACCENT
         self._phase_pill.setStyleSheet(
             f"QLabel {{ background-color: {accent}; color: #ffffff; "
-            f"border-radius: 13px; padding: 4px 14px; "
-            f"font-size: 11px; font-weight: bold; "
-            f"letter-spacing: 2px; }}")
+            f"border-radius: 19px; padding: 6px 18px; "
+            f"font-size: 14px; font-weight: bold; "
+            f"letter-spacing: 3px; }}")
+
+    def _highlight_timeline(self, phase, sub_view):
+        """Phase 名に応じて 5 セグメントのどれかをハイライト."""
+        if not hasattr(self, "_timeline_segments"):
+            return
+        # マッピング: phase 文字列 → segment index
+        if sub_view == "underwater":
+            active_idx = 4   # HR-arc
+        else:
+            mapping = {"CALM": 0, "RISING": 1, "INTENSE": 2, "STORMY": 3}
+            active_idx = mapping.get(str(phase).upper(), 0)
+        for i, (seg, label, color) in enumerate(self._timeline_segments):
+            if i == active_idx:
+                seg.setStyleSheet(
+                    f"QLabel {{ background-color: {color}; "
+                    f"color: #ffffff; border-radius: 4px; "
+                    f"font-size: 9px; font-weight: bold; "
+                    f"letter-spacing: 1px; padding: 2px 4px; }}")
+            else:
+                seg.setStyleSheet(
+                    "QLabel { background-color: rgba(255,255,255,18); "
+                    "color: #a0a0a0; border-radius: 4px; "
+                    "font-size: 9px; font-weight: bold; "
+                    "letter-spacing: 1px; padding: 2px 4px; }")
 
     # ------------------------------------------------------------------
     def set_state(self, arousal, valence, engagement, hr,
@@ -1146,6 +1204,8 @@ class _DemoExplainOverlay(QtWidgets.QFrame):
         # phase ピル
         self._phase_pill.setText(f"PHASE · {phase}")
         self._update_phase_pill_style(sub_view)
+        # タイムライン
+        self._highlight_timeline(phase, sub_view)
         # progress bar 色も切替
         prog_color = self.EEG_ACCENT if sub_view == "surface" else self.HR_ACCENT
         self._prog.setStyleSheet(self._progress_style(prog_color))
@@ -5408,12 +5468,16 @@ class MainWindow(QtWidgets.QMainWindow):
                         pad + 50)
                     self._watch_demo_btn.raise_()
                 if hasattr(self, "_watch_demo_panel"):
-                    # 右側に固定幅 360 のパネル、上下に余白 100 / 80
-                    pw = 360
-                    ph = max(360, self.watch_page.height() - 180)
+                    # 右側に固定幅 400 のパネル、上下 ⇒ ステータスバー下から
+                    # ボトムまでフルに使う (上下バランス重視).
+                    pw = 400
+                    top_pad = 100   # 上のステータスバー + photo/demo btn 下
+                    bot_pad = 28
+                    ph = max(420,
+                             self.watch_page.height() - top_pad - bot_pad)
                     self._watch_demo_panel.setGeometry(
                         self.watch_page.width() - pw - 14,
-                        100,
+                        top_pad,
                         pw, ph)
                     self._watch_demo_panel.raise_()
         return super().eventFilter(obj, event)

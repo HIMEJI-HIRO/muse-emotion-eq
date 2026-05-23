@@ -69,32 +69,41 @@ Muse S Athena の EEG / PPG から感情を推定し、
 </tr>
 </table>
 
-### Watch — 4 Subviews driven by biosignals
+### Watch — 2 Subviews with explicit drivers
 
 <table>
 <tr>
-<td align="center" width="25%">
+<td align="center" width="50%">
 <img src="docs/images/ui_watch_surface.png" alt="Surface"><br>
-<b>🌅 Surface</b><br>
-<sub>Arousal → 海面の morph 速度</sub>
+<b>🌊 Surface  ·  🧠 EEG-driven</b><br>
+<sub>Arousal × Valence × Engagement で海面の表情と morph 速度が変化.<br>
+画面右上に常時 <code>🧠 EEG-DRIVEN  ·  Arousal 0.72  ·  Valence 0.32</code> オーバーレイ.</sub>
 </td>
-<td align="center" width="25%">
+<td align="center" width="50%">
 <img src="docs/images/ui_watch_underwater_high.png" alt="Underwater"><br>
-<b>🐳 Underwater</b><br>
-<sub>HR で 3 段階: 空海 / 魚群 / ジンベエ+マンタ</sub>
-</td>
-<td align="center" width="25%">
-<img src="docs/images/ui_watch_city.png" alt="City"><br>
-<b>🌆 City</b><br>
-<sub>HR で色温度・脈動 vignette</sub>
-</td>
-<td align="center" width="25%">
-<img src="docs/images/ui_watch_forest.png" alt="Forest"><br>
-<b>🌲 Forest</b><br>
-<sub>Engagement で速度 / Valence で tint</sub>
+<b>🌊 Underwater  ·  ♥ HR-driven</b><br>
+<sub>HR ヒステリシスで LOW / MID / HIGH の 3 シーンをクロスフェード.<br>
+画面右上に <code>♥ HR-DRIVEN  ·  72.4 BPM  ·  zone: MID</code> オーバーレイ.</sub>
 </td>
 </tr>
 </table>
+
+### ▶ Demo Mode (no headset required)
+
+Watch 右上の **`▶ Demo`** ボタンで起動. 60 秒ループで EEG/HR を**滑らかに連続変化**させて、
+ヘッドセットを持っていない人にも「どの数値がどの画面要素を動かすか」を体験させられる:
+
+```
+0s ────────── 30s ────────── 60s
+🧠 Surface (EEG)            ♥ Underwater (HR)
+CALM → RISING → INTENSE → STORMY      LOW → MID → HIGH → MID → LOW
+A: 0.30 → 0.72                        BPM: 62 → 92 → 62
+V: 0.62 → 0.32                        zone: 全 3 段階を巡回
+E: 0.42 → 0.62
+```
+
+**右側の説明パネル** がリアルタイムでメータを動かし、現在の phase / 駆動源 / "何が起きているか" を
+日本語で解説します. デモ動画録画にもそのまま使えるよう設計.
 
 ---
 
